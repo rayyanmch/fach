@@ -77,8 +77,10 @@ def run_window(services: Services, dev: bool = False) -> int:
         background_color="#F6F5F2", text_select=True,
     )
 
+    folder_kind = webview.FileDialog.FOLDER if hasattr(webview, "FileDialog") else webview.FOLDER_DIALOG
+
     def choose_folder(start: str) -> Optional[str]:
-        result = window.create_file_dialog(webview.FOLDER_DIALOG, directory=start)
+        result = window.create_file_dialog(folder_kind, directory=start)
         return result[0] if result else None
 
     def focus() -> None:

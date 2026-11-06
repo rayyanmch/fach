@@ -36,7 +36,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--home", help="eigener Datenordner (z. B. für Tests)")
     parser.add_argument("--remove-schedule", action="store_true", help="Zeitplan aus dem System entfernen (Deinstallation)")
     parser.add_argument("--version", action="version", version=f"Fach {__version__}")
+    parser.add_argument("--selftest", metavar="DATEI", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+
+    if args.selftest:
+        from .selftest import run
+
+        return run(args.selftest)
 
     from .app import build_services, demo_home, use_home
 

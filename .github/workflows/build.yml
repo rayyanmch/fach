@@ -19,8 +19,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
@@ -30,8 +30,8 @@ jobs:
     needs: test
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Abhängigkeiten
@@ -44,11 +44,12 @@ jobs:
         run: python -m fach --version
       - name: App bauen (PyInstaller)
         run: pyinstaller --noconfirm packaging/fach.spec
-      - name: Gebaute App startet (--version)
+      - name: Selbsttest der gebauten App (PFERD, Keyring, pywebview im Paket)
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath dist\Fach\Fach.exe -ArgumentList "--version" -PassThru -Wait
-          if ($p.ExitCode -ne 0) { throw "Fach.exe --version endete mit $($p.ExitCode)" }
+          $p = Start-Process -FilePath dist\Fach\Fach.exe -ArgumentList "--selftest","selftest.json" -PassThru -Wait
+          Get-Content selftest.json
+          if ($p.ExitCode -ne 0) { throw "Selbsttest fehlgeschlagen ($($p.ExitCode))" }
       - name: Installer bauen (Inno Setup)
         shell: pwsh
         run: |
@@ -78,8 +79,8 @@ jobs:
     runs-on: macos-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: pip install -e ".[window]" "pyinstaller>=6.10"
