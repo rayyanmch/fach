@@ -57,21 +57,49 @@ jobs:
           $version = (Select-String -Path fach/__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging\windows\fach.iss
           Compress-Archive -Path dist\Fach -DestinationPath "dist\Fach-$version-portable.zip"
+      - name: Versionsprüfung (Tag = __version__)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path fach/__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$version" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} passt nicht zu __version__ $version" }
+      - name: Update-Manifest (latest.json)
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path fach/__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
+          $setup = Get-Item "dist\Fach-Setup-$version.exe"
+          git fetch --force --tags --depth=1 2>$null
+          $notes = git tag -l --format='%(contents)' "${{ github.ref_name }}" 2>$null
+          if (-not $notes) { $notes = "" }
+          $manifest = [ordered]@{
+            version = $version
+            setup = $setup.Name
+            sha256 = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+            size = $setup.Length
+            published = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            notes = ($notes -join "`n").Trim()
+          }
+          $manifest | ConvertTo-Json | Out-File -Encoding utf8NoBOM dist\latest.json
+          Get-Content dist\latest.json
       - uses: actions/upload-artifact@v4
         with:
           name: Fach-Windows
           path: |
             dist/Fach-Setup-*.exe
             dist/Fach-*-portable.zip
+            dist/latest.json
           retention-days: 30
       - name: Release (nur bei Tags)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          prerelease: true
+          prerelease: false
+          make_latest: true
+          generate_release_notes: false
           files: |
             dist/Fach-Setup-*.exe
             dist/Fach-*-portable.zip
+            dist/latest.json
 
   macos:
     needs: test

@@ -1,15 +1,19 @@
 // Start, Routing, Live-Ereignisse und Tastenkürzel.
 import { api, listen } from "./api.js";
 import { h, mount, toast } from "./dom.js";
-import { refreshFeed, refreshRuns, refreshState, refreshTimeline, store, subscribe } from "./store.js";
+import { refreshExams, refreshFeed, refreshRuns, refreshState, refreshTimeline, refreshUpdate, store, subscribe } from "./store.js";
+import { mountTitlebar } from "./titlebar.js";
+import { hideTip } from "./tooltip.js";
 import { mountCourses } from "./views/courses.js";
+import { mountExams } from "./views/exams.js";
+import { mountFiles } from "./views/files.js";
 import { mountHome } from "./views/home.js";
 import { mountOnboarding, onboardingActive, onboardingEvent } from "./views/onboarding.js";
 import { mountSettings } from "./views/settings.js";
-import { renderShell, ROUTES, runToast, startSync, updateSyncBox } from "./views/shell.js";
+import { refreshNavCounts, renderShell, ROUTES, runToast, startSync, updatePill, updateSyncBox } from "./views/shell.js";
 
 const root = document.getElementById("root");
-const PAGES = { uebersicht: mountHome, kurse: mountCourses, einstellungen: mountSettings };
+const PAGES = { uebersicht: mountHome, kurse: mountCourses, dateien: mountFiles, klausuren: mountExams, einstellungen: mountSettings };
 let cleanup = null;
 let current = null;
 
@@ -32,27 +36,11 @@ function route() {
   const id = routeId();
   const key = `page:${id}`;
   if (current === key) return;
+  hideTip();
   cleanup?.();
   current = key;
   const { main } = renderShell(root, id);
   cleanup = PAGES[id](main);
-  main.focus?.();
-}
-
-// Sidebar-Zähler und Status ändern sich, ohne dass die Seite neu gezeichnet wird.
-function refreshChrome() {
-  if (!current?.startsWith("page:")) return;
-  const s = store.state;
-  const unopened = s.courses.reduce((n, c) => n + (c.enabled ? c.unopened : 0), 0);
-  const counts = { uebersicht: unopened, kurse: s.courses.filter((c) => c.enabled).length };
-  document.querySelectorAll(".nav a").forEach((a, i) => {
-    const id = ROUTES[i].id;
-    let badge = a.querySelector(".count");
-    if (!counts[id]) { badge?.remove(); return; }
-    if (!badge) { badge = h("span", { class: `count ${id === "uebersicht" ? "new" : ""}` }); a.append(badge); }
-    badge.textContent = counts[id];
-  });
-  updateSyncBox();
 }
 
 function onEvent(ev) {
@@ -75,7 +63,14 @@ function onEvent(ev) {
         refreshRuns().catch(() => {});
       }
     });
+  } else if (ev.type === "update") {
+    store.update = ev.update;
+    updatePill();
+    if (current === "page:einstellungen") refreshUpdate().catch(() => {});
+  } else if (ev.type === "exams_scan") {
+    if (store.exams) { store.exams.scan = ev.scan; if (current === "page:klausuren") refreshExams().catch(() => {}); }
   } else if (ev.type === "changed") {
+    if (ev.what === "exams") { refreshExams().catch(() => {}); return; }
     refreshState().then(() => { if (ev.what === "feed") refreshFeed(); });
   }
 }
@@ -105,6 +100,7 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (typing || e.ctrlKey || e.metaKey || e.altKey || !current?.startsWith("page:")) return;
+  if (document.querySelector(".dialog-backdrop")) return;
   const idx = Number(e.key) - 1;
   if (ROUTES[idx]) location.hash = `#/${ROUTES[idx].id}`;
 });
@@ -121,6 +117,7 @@ async function boot() {
     mount(root, h("div", { class: "empty", style: { marginTop: "20vh" } }, h("h3", {}, "Fach antwortet nicht"), h("p", {}, e.message)));
     return;
   }
+  mountTitlebar(Boolean(store.state.app.custom_chrome));
   window.addEventListener("hashchange", route);
   listen(onEvent, (ok) => {
     if (ok && !store.ui.connected) refreshState().then(route);
@@ -130,11 +127,12 @@ async function boot() {
   subscribe((what) => {
     if (what !== "state") return;
     route();
-    refreshChrome();
+    if (current?.startsWith("page:")) { refreshNavCounts(); updateSyncBox(); }
     watchExternal();
   });
   route();
   watchExternal();
+  refreshUpdate().then(updatePill).catch(() => {});
 }
 
 window.addEventListener("unhandledrejection", (e) => {

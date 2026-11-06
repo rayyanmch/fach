@@ -25,7 +25,8 @@ from .. import __version__
 from ..app import Services
 from ..core import schedule as sched
 from ..core.config import AppConfig, Course, Options, Schedule
-from ..core.naming import clean_title, course_label, folder_name, is_valid_folder, semester_from_title
+from ..core.naming import (clean_title, course_label, folder_name, is_valid_relpath, module_key, plan_layout,
+                           semester_from_title)
 from ..core.paths import default_target_dir
 from ..core.secrets import password_store_name
 from ..core.university import semester_for
@@ -41,10 +42,13 @@ class ApiError(Exception):
 
 
 class UiHooks:
-    """Was nur das Desktop-Fenster kann (nativer Ordner-Dialog, Fenster nach vorne holen)."""
+    """Was nur das Desktop-Fenster kann (nativer Ordner-Dialog, Fenster nach vorne holen, Titelleiste …)."""
 
     choose_folder: Optional[Callable[[str], Optional[str]]] = None
     focus: Optional[Callable[[], None]] = None
+    quit: Optional[Callable[[], None]] = None
+    chrome: Any = None                                          # platform.windows_window.WindowsChrome
+    start_file_drag: Optional[Callable[[list[str]], bool]] = None
 
 
 def _within(root: Path, path: Path) -> bool:
@@ -104,7 +108,10 @@ class Api:
         self._schedule_installed = None
 
     def _course_json(self, c: Course, unopened: dict[str, int]) -> dict[str, Any]:
-        return {**asdict(c), "display_title": clean_title(c.title), "unopened": unopened.get(c.id, 0)}
+        data = asdict(c)
+        data.pop("rules", None)
+        return {**data, "display_title": clean_title(c.title), "unopened": unopened.get(c.id, 0),
+                "module": c.module, "role": c.role}
 
     def _suggest(self, found: list[FoundCourse]) -> list[dict[str, Any]]:
         """Vorschläge für die Kursauswahl: Ordner, Kürzel, vorausgewählt ja/nein."""
@@ -112,23 +119,24 @@ class Api:
         for f in found:
             f.semester = f.semester or semester_from_title(f.title)
         any_semester = any(f.semester for f in found)
-        taken = {c.folder for c in self.cfg.courses}
+        # Neue Kurse gemeinsam planen, damit Vorlesung + Übung eines Moduls in einen Ordner kommen
+        fresh = [f for f in found if not self.cfg.course(f.id)]
+        layout = plan_layout([(f.id, f.title) for f in fresh], {c.module for c in self.cfg.courses})
         out = []
         for f in found:
             known = self.cfg.course(f.id)
             if known:
                 folder, label, selected = known.folder, known.label, known.enabled
             else:
-                folder = folder_name(f.title, taken)
-                taken.add(folder)
-                label = course_label(f.title)
+                folder, label = layout[f.id]
                 selected = (f.semester == current) if any_semester else True
             out.append({
                 "id": f.id, "title": f.title, "display_title": clean_title(f.title), "url": f.url,
                 "semester": f.semester, "period": f.period, "folder": folder, "label": label,
                 "selected": selected, "known": known is not None, "current": f.semester == current,
             })
-        out.sort(key=lambda c: (not c["current"], not c["selected"], c["display_title"].lower()))
+        # Kurse eines Moduls stehen nebeneinander (Vorlesung vor Übung)
+        out.sort(key=lambda c: (not c["current"], c["folder"].split("/")[0].lower(), c["folder"].lower()))
         return out
 
     # --- Zustand ----------------------------------------------------------------
@@ -143,7 +151,8 @@ class Api:
         target = cfg.target_path if cfg.target_dir else default_target_dir()
         return web.json_response({
             "app": {"version": __version__, "demo": self.s.demo, "platform": self.s.platform.name,
-                    "password_store": password_store_name(), "can_choose_folder": self.hooks.choose_folder is not None},
+                    "password_store": password_store_name(), "can_choose_folder": self.hooks.choose_folder is not None,
+                    "custom_chrome": self.hooks.chrome is not None, "can_drag": self.hooks.start_file_drag is not None},
             "uni": {"name": self.s.uni.name, "username_hint": self.s.uni.username_hint,
                     "username_help": self.s.uni.username_help, "host": self.s.uni.host},
             "onboarded": cfg.onboarded,
@@ -164,9 +173,10 @@ class Api:
         })
 
     async def feed(self, request: web.Request) -> web.Response:
-        course_id = request.query.get("course") or None
+        module = request.query.get("module") or None
+        ids = [c.id for c in self.cfg.courses if c.module == module] if module else None
         days = min(int(request.query.get("days", "21")), 120)
-        events = self.s.store.feed(limit=300, since=time.time() - days * 86400, course_id=course_id)
+        events = self.s.store.feed(limit=300, since=time.time() - days * 86400, course_ids=ids)
         root = self.cfg.target_path
         out = []
         for e in events:
@@ -225,23 +235,23 @@ class Api:
     def _apply_courses(self, work: AppConfig, items: list[dict[str, Any]]) -> list[tuple[Course, str]]:
         """Änderungen auf eine Kopie der Konfig anwenden und prüfen. Gibt ausstehende Umbenennungen zurück.
 
-        Erst wenn alles gültig ist, benennt der Aufrufer Ordner um und speichert – so bleibt bei einem
+        Erst wenn alles gültig ist, verschiebt der Aufrufer Ordner und speichert – so bleibt bei einem
         Fehler weder die Konfig noch die Festplatte halb geändert.
         """
         renames: list[tuple[Course, str]] = []
         for item in items:
             cid = str(item.get("id", ""))
             course = work.course(cid)
-            folder = str(item.get("folder", "")).strip()
+            folder = "/".join(p.strip() for p in str(item.get("folder", "")).replace("\\", "/").split("/")).strip("/")
             label = str(item.get("label", "")).strip()[:5]
-            if folder and not is_valid_folder(folder):
+            if folder and not is_valid_relpath(folder):
                 raise ApiError(400, "folder", f"„{folder}“ ist kein gültiger Ordnername.")
             if course is None:
                 if not item.get("title") or not re.fullmatch(r"(crs|grp)_\d+", cid):
                     continue
                 title = str(item["title"])[:300]
                 course = Course(id=cid, title=title,
-                                folder=folder or folder_name(title, {c.folder for c in work.courses}),
+                                folder=folder or folder_name(title, {c.module for c in work.courses}),
                                 label=label or course_label(title), semester=str(item.get("semester", ""))[:20])
                 work.courses.append(course)
             elif folder and folder != course.folder:
@@ -250,30 +260,103 @@ class Api:
                 course.label = label.upper()
             if "enabled" in item:
                 course.enabled = bool(item["enabled"])
+
         pending = {c.id: new for c, new in renames}
-        final = {c.id: pending.get(c.id, c.folder) for c in work.courses}
-        lowered = [final[c.id].lower() for c in work.courses]
-        dupes = {f for f in lowered if lowered.count(f) > 1}
-        if dupes:
-            name = next(final[c.id] for c in work.courses if final[c.id].lower() in dupes)
-            raise ApiError(400, "folder", f"Zwei Kurse wollen in den Ordner „{name}“.")
+        final = [(c, pending.get(c.id, c.folder)) for c in work.courses]
+        for i, (a, fa) in enumerate(final):
+            for b, fb in final[i + 1:]:
+                la, lb = fa.lower(), fb.lower()
+                if la == lb:
+                    raise ApiError(400, "folder", f"Zwei Kurse wollen in den Ordner „{fa}“.")
+                if lb.startswith(la + "/") or la.startswith(lb + "/"):
+                    inner = fb if len(fb) > len(fa) else fa
+                    raise ApiError(400, "folder", f"„{inner}“ läge im Ordner eines anderen Kurses. Nutze einen eigenen Unterordner.")
         if renames and self.s.engine.running:
             raise ApiError(409, "busy", "Während des Abgleichs lassen sich Ordner nicht umbenennen.")
         root = work.target_path
+        leaving = [(root / c.folder) for c, _ in renames if (root / c.folder).exists()]
         for course, new in renames:
-            old_path, new_path = root / course.folder, root / new
-            if new_path.exists() and old_path.exists() and old_path.resolve() != new_path.resolve():
+            new_path = root / new
+            if new_path.exists() and not any(new_path == old or _within(old, new_path) for old in leaving):
                 raise ApiError(409, "exists", f"Den Ordner „{new}“ gibt es schon.")
         return renames
 
     def _commit(self, work: AppConfig, renames: list[tuple[Course, str]]) -> None:
+        """Ordner in zwei Phasen verschieben (erst alle zur Seite, dann ans Ziel).
+
+        So klappt auch „Visualisierung“ → „Visualisierung/Vorlesung“, wo das Ziel im alten Ordner liegt.
+        """
         root = work.target_path
-        for course, new in renames:
-            old_path = root / course.folder
-            if old_path.exists():
-                old_path.rename(root / new)
-            course.folder = new
+        parked: list[tuple[Course, Path, str]] = []
+        try:
+            for i, (course, new) in enumerate(renames):
+                old = root / course.folder
+                if old.exists():
+                    tmp = root / f".fach-verschieben-{int(time.time())}-{i}"
+                    old.rename(tmp)
+                    parked.append((course, tmp, new))
+                else:
+                    parked.append((course, Path(), new))
+            for course, tmp, new in parked:
+                if tmp != Path():
+                    target = root / new
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    tmp.rename(target)
+                course.folder = new
+        except OSError as e:
+            # Zurückrollen, was schon zur Seite gelegt wurde
+            for course, tmp, _ in parked:
+                if tmp != Path() and tmp.exists():
+                    tmp.rename(root / course.folder)
+            raise ApiError(409, "move", f"Ordner ließ sich nicht verschieben: {e.strerror or e}. Ist eine Datei darin geöffnet?")
         self.s.config.save(work)
+
+    # --- Module zusammenlegen ---------------------------------------------------
+
+    def _group_suggestions(self) -> list[dict[str, Any]]:
+        cfg = self.cfg
+        active = cfg.courses
+        layout = plan_layout([(c.id, c.title) for c in active], set())
+        groups: dict[str, list[Course]] = {}
+        for c in active:
+            groups.setdefault(module_key(c.title), []).append(c)
+        out = []
+        for key, members in groups.items():
+            if len(members) < 2 or key in cfg.dismissed_groups:
+                continue
+            modules = {c.module for c in members}
+            if len(modules) == 1 and all("/" in c.folder for c in members):
+                continue  # schon zusammengelegt
+            module = layout[members[0].id][0].split("/", 1)[0]
+            # Ordnername darf nicht mit einem fremden Kurs kollidieren
+            others = {c.module.lower() for c in active if c not in members}
+            if module.lower() in others:
+                module = folder_name(module, {c.module for c in active if c not in members})
+            out.append({
+                "key": key, "module": module, "label": layout[members[0].id][1],
+                "members": [{"id": c.id, "title": clean_title(c.title), "from": c.folder,
+                             "to": f"{module}/{layout[c.id][0].split('/', 1)[1]}"} for c in members],
+            })
+        return out
+
+    async def groups(self, request: web.Request) -> web.Response:
+        return web.json_response(self._group_suggestions())
+
+    async def apply_group(self, request: web.Request) -> web.Response:
+        data = await self._json(request)
+        key = str(data.get("key", ""))
+        suggestion = next((g for g in self._group_suggestions() if g["key"] == key), None)
+        if suggestion is None:
+            raise ApiError(404, "unknown", "Diesen Vorschlag gibt es nicht mehr.")
+        work = self._copy(self.cfg)
+        if not data.get("apply"):
+            work.dismissed_groups = sorted({*work.dismissed_groups, key})
+            self.s.config.save(work)
+        else:
+            items = [{"id": m["id"], "folder": m["to"], "label": suggestion["label"]} for m in suggestion["members"]]
+            self._commit(work, self._apply_courses(work, items))
+        self._changed("courses")
+        return web.json_response({"ok": True})
 
     async def setup(self, request: web.Request) -> web.Response:
         """Abschluss des Onboardings: Kurse, Ordner, Zeitplan speichern und ersten Abgleich starten."""
@@ -457,7 +540,8 @@ class Api:
 
     async def seen(self, request: web.Request) -> web.Response:
         data = await self._json(request)
-        self.s.store.mark_all_opened(data.get("course_id") or None)
+        module = data.get("module")
+        self.s.store.mark_all_opened([c.id for c in self.cfg.courses if c.module == module] if module else None)
         self._changed("feed")
         return web.json_response({"ok": True})
 

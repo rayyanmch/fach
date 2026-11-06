@@ -72,10 +72,25 @@ def run_window(services: Services, dev: bool = False) -> int:
     loop.run(server.start(), timeout=20)
     write_instance(services.paths.instance_file, server.port, server.token)
 
+    # Eigene Titelleiste nur unter Windows; abschaltbar in den Einstellungen (falls etwas klemmt).
+    custom_chrome = sys.platform == "win32" and not services.config.config.options.native_frame
     window = webview.create_window(
         "Fach", f"{server.url}#t={server.token}", width=1160, height=780, min_size=(920, 640),
-        background_color="#F6F5F2", text_select=True,
+        background_color="#F6F5F2", text_select=True, frameless=custom_chrome, easy_drag=False,
+        shadow=custom_chrome,
     )
+    if custom_chrome:
+        from .platform.windows_window import try_chrome
+
+        chrome = try_chrome(window)
+        if chrome is not None:
+            hooks.chrome = chrome
+            hooks.start_file_drag = chrome.start_file_drag
+            window.events.shown += chrome.prepare
+    elif sys.platform == "win32":
+        from .platform.windows_window import WindowsChrome
+
+        hooks.start_file_drag = WindowsChrome(window).start_file_drag
 
     folder_kind = webview.FileDialog.FOLDER if hasattr(webview, "FileDialog") else webview.FOLDER_DIALOG
 
@@ -94,6 +109,7 @@ def run_window(services: Services, dev: bool = False) -> int:
 
     hooks.choose_folder = choose_folder
     hooks.focus = focus
+    hooks.quit = window.destroy
     try:
         webview.start(debug=dev, private_mode=True)
     except Exception:
@@ -163,13 +179,31 @@ def run_sync(services: Services) -> int:
     async def main():
         return await services.engine.run("auto")
 
+    async def update_quietly() -> None:
+        """Auch ohne geöffnetes Fenster aktuell bleiben – viele öffnen Fach nach der Einrichtung nie wieder."""
+        from .update import Updater, installed_with_installer
+
+        if not cfg.options.auto_update or not installed_with_installer():
+            return
+        updater = Updater(services.paths.data_dir / "updates")
+        if await updater.check() and await updater.download():
+            updater.install(relaunch=False)
+
+    async def everything():
+        record = await main()
+        try:
+            await update_quietly()
+        except Exception:
+            pass
+        return record
+
     if sys.platform == "win32":
         # PFERD-Hinweis: Windows-Loop stürzt nach asyncio.run gelegentlich beim Aufräumen ab.
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        record = loop.run_until_complete(main())
+        record = loop.run_until_complete(everything())
         loop.run_until_complete(asyncio.sleep(0.5))
         loop.close()
     else:
-        record = asyncio.run(main())
+        record = asyncio.run(everything())
     return 0 if record is None or record.status in ("ok", "partial") else 1

@@ -1,6 +1,7 @@
 # Feature-Ideen: vom Downloader zum Semester-Begleiter
 
-Stand 06.11.2026 · nichts davon ist gebaut. Die Architektur ist aber so geschnitten, dass jede Idee an
+Stand 07.11.2026 · **Gebaut in 0.2:** Klausuren als erster Teil des Fristen-Radars (Idee 1), Modul-Ordner (Teil von
+Idee 4), Datei-Browser. Alles andere ist offen. Die Architektur ist aber so geschnitten, dass jede Idee an
 einer klaren Stelle andockt (siehe „Andockstelle“).
 
 ## Worum es eigentlich geht
@@ -41,6 +42,9 @@ heutigen Verhalten, keine Kür.
 ## Erste Reihe
 
 ### 1 · Fristen-Radar – Abgaben, Klausuren, Anmeldungen
+> **Teilweise gebaut (0.2):** Tab „Klausuren“ – Termine aus PDFs, einer pro Modul wählbar, eigene Termine,
+> Kollisionswarnung, ICS-Export. Offen: Abgaben (ILIAS-Übungen), Anmeldefristen, Erinnerungen.
+
 **Was:** Eine Liste „Als Nächstes“ mit allen Fristen aller Kurse, Erinnerungen 3 Tage und 1 Tag vorher,
 dazu eine Kalenderdatei (ICS) zum Abonnieren in Google/Outlook/Apple-Kalender.
 **Woher die Daten kommen:**

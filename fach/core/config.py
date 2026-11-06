@@ -25,6 +25,17 @@ class Course:
     semester: str = ""      # "WiSe 2026/27", falls erkennbar
     added_at: float = field(default_factory=time.time)
     synced_once: bool = False
+    # Eigene Umbenennungen/Löschungen aus dem Datei-Browser, als PFERD-Regeln:
+    # {"src": "Ordner/datei.pdf", "dst": "Ordner/neu.pdf"} bzw. {"src": ..., "dst": None} = nicht mehr laden
+    rules: list[dict] = field(default_factory=list)
+
+    @property
+    def module(self) -> str:
+        return self.folder.split("/", 1)[0]
+
+    @property
+    def role(self) -> str:
+        return self.folder.split("/", 1)[1] if "/" in self.folder else ""
 
     @property
     def kind(self) -> str:
@@ -48,6 +59,8 @@ class Options:
     notify_new: bool = True
     notify_error: bool = True
     videos: bool = False
+    auto_update: bool = True
+    native_frame: bool = False   # True = normale Windows-Titelleiste statt der eingebauten
 
 
 @dataclass
@@ -60,6 +73,7 @@ class AppConfig:
     schedule: Schedule = field(default_factory=Schedule)
     options: Options = field(default_factory=Options)
     onboarded: bool = False
+    dismissed_groups: list[str] = field(default_factory=list)   # abgelehnte Vorschläge „Kurse zusammenlegen“
 
     def course(self, course_id: str) -> Course | None:
         return next((c for c in self.courses if c.id == course_id), None)

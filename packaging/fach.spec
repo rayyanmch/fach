@@ -10,7 +10,7 @@ from PyInstaller.utils.hooks import collect_submodules
 ROOT = Path(SPECPATH).parent
 ICON = ROOT / "packaging" / "assets" / ("fach.ico" if sys.platform == "win32" else "fach.png")
 
-hidden = collect_submodules("PFERD") + ["platformdirs"]
+hidden = collect_submodules("PFERD") + collect_submodules("pypdf") + ["platformdirs"]
 if sys.platform == "win32":
     hidden += ["keyring.backends.Windows", "win32ctypes.core"]
 elif sys.platform == "darwin":
@@ -45,5 +45,5 @@ if sys.platform == "darwin":
         name="Fach.app",
         icon=None,
         bundle_identifier="de.fach.app",
-        info_plist={"CFBundleName": "Fach", "CFBundleShortVersionString": "0.1.0", "NSHighResolutionCapable": True},
+        info_plist={"CFBundleName": "Fach", "NSHighResolutionCapable": True},
     )

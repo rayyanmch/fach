@@ -58,6 +58,7 @@ export function duration(sec) {
 }
 
 export function bytes(n) {
+  if (!n) return "0 KB";
   if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
   if (n < 1024 ** 3) return `${(n / 1024 / 1024).toLocaleString("de-DE", { maximumFractionDigits: 0 })} MB`;
   return `${(n / 1024 ** 3).toLocaleString("de-DE", { maximumFractionDigits: 1 })} GB`;
@@ -73,3 +74,32 @@ export function prettyPath(p) {
 }
 
 export const DAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+
+// Restzeit: „unter einer Minute“, „ca. 3 Min.“, „ca. 1 Std. 10 Min.“
+export function eta(sec) {
+  if (sec === null || sec === undefined) return "Restzeit wird geschätzt";
+  if (sec < 45) return "noch unter einer Minute";
+  const min = Math.round(sec / 60);
+  if (min < 60) return `noch ca. ${min} Min.`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `noch ca. ${h} Std.${m ? ` ${m} Min.` : ""}`;
+}
+
+const longDate = new Intl.DateTimeFormat("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" });
+const longDateYear = new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "numeric", month: "long" });
+
+// ISO-Datum (JJJJ-MM-TT) ohne Zeitzonen-Verschiebung
+export const isoDate = (iso) => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d); };
+export const shortDay = (iso) => longDate.format(isoDate(iso)).replace(",", "").replace(/^(\p{L}+)\./u, "$1");   // „Do 11.02.“
+export const longDay = (iso) => longDateYear.format(isoDate(iso));                    // „Donnerstag, 11. Februar“
+export function daysUntil(iso) {
+  return Math.round((isoDate(iso) - new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate())) / 86400000);
+}
+export function inDays(n) {
+  if (n === 0) return "heute";
+  if (n === 1) return "morgen";
+  if (n < 0) return n === -1 ? "gestern" : `vor ${-n} Tagen`;
+  return `in ${n} Tagen`;
+}
+export const WEEKDAYS_LONG = ["montags", "dienstags", "mittwochs", "donnerstags", "freitags", "samstags", "sonntags"];

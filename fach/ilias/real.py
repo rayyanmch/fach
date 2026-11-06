@@ -122,7 +122,7 @@ class RealIlias:
         report_path = self._report_path(course.id)
         initial = not report_path.exists()
         section = rt.course_section(self.uni.base_url, self.uni.client_id, self._target(course.id),
-                                    course.folder, videos)
+                                    course.folder, videos, course.rules)
         cfg = rt.build_config(target_dir, {f"crawl:{course.id}": section})
         name, sec = cfg.crawl_sections()[0]
         crawler = rt.FachCrawler(name, sec, cfg, {"auth:fach": rt.AppAuthenticator(username, password)},
@@ -144,6 +144,9 @@ class RealIlias:
 
     def set_log_stream(self, stream) -> None:
         rt.set_log_stream(stream)
+
+    def set_byte_hook(self, fn) -> None:
+        rt.set_byte_hook(fn)
 
     def forget(self, course_id: str) -> None:
         self._report_path(course_id).unlink(missing_ok=True)

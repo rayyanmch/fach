@@ -171,7 +171,63 @@
 .menu button:hover { background: var(--raised); }
 .menu button .icon { color: var(--muted); }
 .menu button.danger { color: var(--negative); }
+.menu button[disabled] { opacity: 0.4; pointer-events: none; }
+.menu .kbd { margin-left: auto; }
+.menu { min-width: 220px; }
 .menu button.danger .icon { color: var(--negative); }
 @keyframes pop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 
 .skeleton { background: var(--raised); border-radius: var(--r-sm); animation: none; }
+
+/* ---------- Hover-Karte ---------- */
+.tip {
+  position: fixed; z-index: 60; max-width: 300px; padding: 10px 12px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--shadow-float);
+  font-size: 12px; line-height: 17px; color: var(--text-2); pointer-events: none;
+  animation: pop var(--fast) var(--ease);
+}
+.tip .tip-head { font: 400 11px/16px var(--mono); color: var(--muted); margin-bottom: 4px; }
+.tip .tip-main { font-size: 13px; line-height: 18px; color: var(--text); font-weight: 500; }
+.tip .tip-list { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.tip .tip-list li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tip .tip-list li::before { content: "– "; color: var(--muted); }
+.tip .tip-more { color: var(--muted); margin-top: 2px; }
+.tip .tip-split { display: flex; gap: 12px; margin-top: 6px; font: 400 11px/16px var(--mono); color: var(--muted); }
+
+/* ---------- Eigene Titelleiste (Windows, rahmenloses Fenster) ---------- */
+.titlebar {
+  position: fixed; top: 0; left: 0; right: 0; height: 36px; z-index: 30;
+  display: grid; grid-template-columns: var(--chrome-left, 240px) minmax(0, 1fr) auto;
+}
+.titlebar .tb-drag { height: 100%; }
+.titlebar .tb-fill { background: var(--bg); }
+.titlebar .tb-controls { display: flex; background: var(--bg); }
+.tb-btn {
+  width: 46px; height: 36px; border: 0; background: transparent; color: var(--text-2);
+  display: grid; place-items: center; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+.tb-btn:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+.tb-btn.close:hover { background: #c42b2b; color: #fff; }
+.tb-btn svg { width: 10px; height: 10px; }
+.resize-edge { position: fixed; z-index: 40; }
+.resize-edge[data-edge="top"] { top: 0; left: 10px; right: 10px; height: 4px; cursor: ns-resize; }
+.resize-edge[data-edge="bottom"] { bottom: 0; left: 10px; right: 10px; height: 5px; cursor: ns-resize; }
+.resize-edge[data-edge="left"] { left: 0; top: 10px; bottom: 10px; width: 5px; cursor: ew-resize; }
+.resize-edge[data-edge="right"] { right: 0; top: 10px; bottom: 10px; width: 5px; cursor: ew-resize; }
+.resize-edge[data-edge="topleft"] { top: 0; left: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+.resize-edge[data-edge="topright"] { top: 0; right: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.resize-edge[data-edge="bottomleft"] { bottom: 0; left: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.resize-edge[data-edge="bottomright"] { bottom: 0; right: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+body.maximized .resize-edge { display: none; }
+
+/* Dialog */
+.dialog-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(20, 18, 15, 0.28); display: grid; place-items: center; animation: fade var(--med) var(--ease); }
+.dialog { width: min(440px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r-panel); box-shadow: var(--shadow-float); padding: 20px; animation: pop var(--med) var(--ease); }
+.dialog h2 { font-size: 16px; line-height: 22px; margin-bottom: 6px; }
+.dialog p { color: var(--text-2); font-size: 13px; line-height: 19px; }
+.dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+.seg { display: inline-flex; padding: 2px; border-radius: var(--r); background: var(--raised); gap: 2px; }
+.seg button { height: 28px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text-2); font-size: 13px; font-weight: 500; }
+.seg button[aria-pressed="true"] { background: var(--panel); color: var(--text); box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--line); }

@@ -21,7 +21,12 @@ from aiohttp import web
 
 from ..app import Services
 from ..core.paths import resource_dir
+from ..insights.service import ExamService
+from ..update import Updater
 from .api import Api, UiHooks, wrap
+from .exams_api import ExamsApi
+from .files_api import FilesApi
+from .system_api import SystemApi
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
        "font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
@@ -35,6 +40,13 @@ class Server:
         self.token = token or secrets.token_urlsafe(32)
         self.port = port
         self.api = Api(services, self.hooks)
+        self.exam_service = ExamService(services.config, services.store, services.bus)
+        self.exams = ExamsApi(services, self.exam_service)
+        self.files = FilesApi(services, self.hooks)
+        self.updater = Updater(services.paths.data_dir / "updates",
+                               on_change=lambda st: services.bus.emit("update", update=st))
+        self.system = SystemApi(services, self.hooks, self.updater)
+        self._background: list[asyncio.Task] = []
         self.clients = 0          # offene SSE-Verbindungen (Browser-Modus: beenden, wenn keiner mehr da ist)
         self._runner: Optional[web.AppRunner] = None
         self._allowed_hosts: set[str] = set()
@@ -85,6 +97,22 @@ class Server:
             ("POST", "/api/logout", a.logout), ("POST", "/api/sync", a.sync), ("POST", "/api/sync/cancel", a.cancel),
             ("POST", "/api/open", a.open), ("POST", "/api/reveal", a.reveal), ("POST", "/api/feed/seen", a.seen),
             ("POST", "/api/schedule/repair", a.repair_schedule), ("POST", "/api/focus", a.focus),
+            ("GET", "/api/courses/groups", a.groups), ("POST", "/api/courses/groups", a.apply_group),
+            # Klausuren
+            ("GET", "/api/exams", self.exams.list), ("POST", "/api/exams", self.exams.add),
+            ("POST", "/api/exams/choose", self.exams.choose), ("POST", "/api/exams/dismiss", self.exams.dismiss),
+            ("POST", "/api/exams/restore", self.exams.restore), ("DELETE", "/api/exams/{exam_id}", self.exams.delete),
+            ("POST", "/api/exams/rescan", self.exams.rescan), ("POST", "/api/exams/source", self.exams.open_source),
+            ("POST", "/api/exams/ics", self.exams.ics),
+            # Dateien
+            ("GET", "/api/files", self.files.list), ("GET", "/api/files/search", self.files.search),
+            ("POST", "/api/files/open", self.files.open), ("POST", "/api/files/open-with", self.files.open_with),
+            ("POST", "/api/files/reveal", self.files.reveal), ("POST", "/api/files/copy", self.files.copy),
+            ("POST", "/api/files/drag", self.files.drag), ("POST", "/api/files/rename", self.files.rename),
+            ("POST", "/api/files/trash", self.files.trash),
+            # Fenster & Updates
+            ("POST", "/api/window", self.system.window), ("GET", "/api/update", self.system.update_state),
+            ("POST", "/api/update/check", self.system.update_check), ("POST", "/api/update/install", self.system.update_install),
         ]
         for method, path, handler in routes:
             r.add_route(method, path, wrap(handler))
@@ -128,8 +156,21 @@ class Server:
         self._allowed_origins = {f"http://{h}" for h in self._allowed_hosts}
         site = web.SockSite(self._runner, sock)
         await site.start()
+        loop = asyncio.get_running_loop()
+        # Nach jedem Abgleich neue PDFs nach Klausurterminen durchsuchen; einmal kurz nach dem Start.
+        self.services.bus.subscribe(lambda ev: self.exam_service.start() if ev.get("type") == "run_done" else None)
+        self._background.append(loop.create_task(self._delayed(8, self.exam_service.scan)))
+        if not self.services.demo:
+            self._background.append(loop.create_task(self.system.auto_update()))
+
+    @staticmethod
+    async def _delayed(seconds: float, fn) -> None:
+        await asyncio.sleep(seconds)
+        await fn()
 
     async def stop(self) -> None:
+        for task in self._background:
+            task.cancel()
         if self.services.engine.running:
             self.services.engine.cancel()
             await self.services.engine.wait()

@@ -65,6 +65,15 @@ class _DemoPlatform:
     def reveal_path(self, path: Path) -> None:
         self._real.reveal_path(path)
 
+    def open_with(self, path: Path) -> None:
+        self._real.open_with(path)
+
+    def copy_files(self, paths: list[Path]) -> None:
+        self._real.copy_files(paths)
+
+    def trash(self, path: Path) -> None:
+        self._real.trash(path)
+
 
 def build_services(demo: bool = False) -> Services:
     paths = app_paths()

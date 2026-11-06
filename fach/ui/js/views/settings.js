@@ -2,14 +2,14 @@
 import { api } from "../api.js";
 import { button, h, mount, toast, toggle } from "../dom.js";
 import { DAYS, duration, upcoming, when } from "../format.js";
-import { refreshRuns, refreshState, store, subscribe } from "../store.js";
+import { refreshRuns, refreshState, refreshUpdate, store, subscribe } from "../store.js";
 
 const STATUS = { ok: "Erfolgreich", partial: "Teilweise", error: "Fehler", offline: "Offline", auth: "Anmeldung", cancelled: "Abgebrochen", running: "Läuft" };
 const TRIGGER = { auto: "automatisch", manual: "von Hand", onboarding: "Einrichtung" };
 
 export function mountSettings(el) {
   let frame = 0;
-  const render = () => {
+  render = () => {
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(() => {
       if (el.contains(document.activeElement) && document.activeElement.matches("input[type=text], input[type=time]")) return;
@@ -19,6 +19,7 @@ export function mountSettings(el) {
   const off = subscribe(render);
   render();
   refreshRuns().catch(() => {});
+  refreshUpdate().catch(() => {});
   return () => { off(); cancelAnimationFrame(frame); };
 }
 
@@ -45,8 +46,47 @@ function page() {
     h("header", { class: "page-head" }, h("div", {}, h("h1", {}, "Einstellungen"),
       h("p", { class: "meta" }, `Fach ${s.app.version}${s.app.demo ? " · Demo-Modus" : ""}`))),
     h("div", { class: "settings" },
-      scheduleSetting(s), folderSetting(s), notifySetting(s), videoSetting(s), accountSetting(s), historySetting(), aboutSetting(s)));
+      updateSetting(s), scheduleSetting(s), folderSetting(s), notifySetting(s), videoSetting(s), windowSetting(s),
+      accountSetting(s), historySetting(), aboutSetting(s)));
 }
+
+function updateSetting(s) {
+  const u = store.update;
+  const check = async () => {
+    try { store.update = await api.post("/api/update/check"); render(); } catch (e) { toast(e.message, "alert"); }
+  };
+  const install = async () => {
+    try { await api.post("/api/update/install"); toast("Update wird geladen – Fach startet danach neu"); } catch (e) { toast(e.message, "alert"); }
+  };
+  let status;
+  if (!u) status = h("div", { class: "status-line" }, "Prüfe …");
+  else if (u.status === "available") status = h("div", { class: "status-line" }, h("span", { class: "dot busy" }), `Version ${u.latest} ist da`);
+  else if (u.status === "downloading") status = h("div", { class: "status-line" }, h("span", { class: "dot busy" }), `Lädt Version ${u.latest} · ${Math.round(u.progress * 100)} %`);
+  else if (u.status === "ready" || u.status === "installing") status = h("div", { class: "status-line" }, h("span", { class: "dot busy" }), "Wird installiert, Fach startet neu");
+  else if (u.status === "uptodate") status = h("div", { class: "status-line" }, h("span", { class: "dot ok" }), `Aktuell${u.checked ? ` · geprüft ${when(u.checked * 1000)}` : ""}`);
+  else if (u.status === "error") status = h("div", { class: "status-line" }, h("span", { class: "dot warn" }), `Konnte nicht prüfen: ${u.error}`);
+  else status = h("div", { class: "status-line" }, "Noch nicht geprüft");
+  const canInstall = u?.can_install && ["available", "error"].includes(u.status) && u.latest && u.latest !== u.current;
+  return setting("Updates", `Installiert ist Fach ${s.app.version}. Updates kommen von GitHub und werden vor der Installation geprüft.`,
+    status,
+    u?.status === "available" && u.notes ? h("p", { class: "about", style: { whiteSpace: "pre-line" } }, u.notes) : null,
+    h("div", { class: "inline" },
+      canInstall ? button(`Version ${u.latest} installieren`, { kind: "primary", size: "sm", icon: "refresh", onClick: install })
+        : button("Nach Updates suchen", { size: "sm", icon: "refresh", onClick: check }),
+      u && !u.can_install && u.status === "available" ? h("a", { href: u.page, target: "_blank", rel: "noreferrer" }, "Installer herunterladen") : null),
+    h("label", { class: "inline" }, toggle(s.options.auto_update, (v) => save({ options: { auto_update: v } }), "Automatisch installieren"),
+      "Updates automatisch installieren"));
+}
+
+function windowSetting(s) {
+  if (!s.app.platform.startsWith("windows")) return null;
+  return setting("Fenster", "Die eingebaute Titelleiste passt zum Rest der App. Klemmt etwas, nimm die normale von Windows.",
+    h("label", { class: "inline" }, toggle(s.options.native_frame, (v) => save({ options: { native_frame: v } }, "Wirkt nach dem nächsten Start von Fach"),
+      "Windows-Titelleiste verwenden"), "Windows-Titelleiste verwenden"),
+    s.options.native_frame !== !s.app.custom_chrome ? h("p", { class: "about" }, "Wird beim nächsten Start von Fach übernommen.") : null);
+}
+
+let render = () => {};
 
 function scheduleSetting(s) {
   const sch = s.schedule;

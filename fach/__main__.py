@@ -24,6 +24,22 @@ def _fix_std_streams() -> None:
             setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
 
 
+def _setup_logging(log_dir, name: str) -> None:
+    """Fehler aus Fenster, Updater usw. in logs/app.log bzw. logs/sync.log (max. 3 × 1 MB)."""
+    import logging
+    from logging.handlers import RotatingFileHandler
+
+    try:
+        handler = RotatingFileHandler(log_dir / f"{name}.log", maxBytes=1_000_000, backupCount=2, encoding="utf-8")
+    except OSError:
+        return
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    root = logging.getLogger("fach")
+    root.setLevel(logging.INFO)
+    root.addHandler(handler)
+    root.info("Fach %s gestartet (%s)", __version__, name)
+
+
 def main(argv: list[str] | None = None) -> int:
     _fix_std_streams()
     parser = argparse.ArgumentParser(prog="fach", description="ILIAS-Unterlagen automatisch auf deinen Rechner.")
@@ -52,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["FACH_DEMO"] = "1"
 
     services = build_services(demo=demo)
+    _setup_logging(services.paths.log_dir, "sync" if args.sync else "app")
     from . import desktop
 
     if args.remove_schedule:

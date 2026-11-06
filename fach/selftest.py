@@ -40,6 +40,20 @@ def run(out: str) -> int:
 
     check("pferd", pferd)
 
+    def pdf() -> str:
+        from .ilias.demo import text_pdf
+        from .insights.exams import find_exams, extract_pages
+
+        p = Path(tempfile.mkdtemp()) / "orga.pdf"
+        p.write_bytes(text_pdf(["Klausur: Do 11.02.2027, 12:00–14:00 Uhr, Kurt-Alder-Hörsaal"]))
+        from datetime import date
+
+        finds = [f for _, text in extract_pages(p) for f in find_exams(text, 1, date(2026, 10, 14))]
+        assert finds and finds[0].start == "12:00", finds
+        return "ok"
+
+    check("pdf", pdf)
+
     def keyring() -> str:
         from .core.secrets import KeyringStore
 

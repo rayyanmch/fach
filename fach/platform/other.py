@@ -28,3 +28,14 @@ class OtherPlatform:
 
     def reveal_path(self, path: Path) -> None:
         subprocess.Popen(["xdg-open", str(path if path.is_dir() else path.parent)])
+
+    def open_with(self, path: Path) -> None:
+        self.reveal_path(path)
+
+    def copy_files(self, paths: list[Path]) -> None:
+        raise OSError("Dateien kopieren wird hier nicht unterstützt.")
+
+    def trash(self, path: Path) -> None:
+        res = subprocess.run(["gio", "trash", str(path)], capture_output=True, text=True)
+        if res.returncode != 0:
+            raise OSError(res.stderr.strip() or "In den Papierkorb verschieben fehlgeschlagen.")

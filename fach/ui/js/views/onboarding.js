@@ -2,7 +2,7 @@
 //   1 Anmelden  →  2 Kurse  →  3 Ablage & Zeitplan  →  erster Abgleich (live)
 import { api } from "../api.js";
 import { button, h, icon, mount, plate, spinner, toast, toggle } from "../dom.js";
-import { plural, prettyPath } from "../format.js";
+import { bytes, eta, plural, prettyPath } from "../format.js";
 import { refreshState, store } from "../store.js";
 import { brandMark } from "./shell.js";
 import { createShelf } from "./shelf.js";
@@ -68,8 +68,19 @@ function updateShelf() {
     return;
   }
   const sel = ob.step === 4 && !ob.courses.length ? store.state.courses.filter((c) => c.enabled) : selected();
-  shelf.setLabels(sel.map((c) => c.label));
-  shelf.setFilled(sel.map((c) => ob.live.done[c.id]), -1);
+  // Ein Fach pro Modul – Vorlesung und Übung teilen sich eines
+  const mods = new Map();
+  for (const c of sel) {
+    const key = c.folder.split("/")[0];
+    if (!mods.has(key)) mods.set(key, { label: c.label, ids: [] });
+    mods.get(key).ids.push(c.id);
+  }
+  const list = [...mods.values()];
+  shelf.setLabels(list.map((m) => m.label));
+  shelf.setFilled(list.map((m) => {
+    const done = m.ids.map((id) => ob.live.done[id]).filter((n) => n !== undefined);
+    return done.length ? done.reduce((a, b) => a + b, 0) : undefined;
+  }), -1);
 }
 
 function steps() {
@@ -165,7 +176,7 @@ function pickRow(c) {
   } else {
     folder = h("div", { class: "f" }, icon("folder", 14),
       h("button", { class: "link-btn", style: { color: "inherit", fontWeight: 400 }, title: "Ordnernamen ändern",
-        onclick: (e) => { e.preventDefault(); ob.editing = c.id; render(); } }, c.folder));
+        onclick: (e) => { e.preventDefault(); ob.editing = c.id; render(); } }, c.folder.split("/").join(" / ")));
   }
   return h("label", { class: `pick ${c.selected ? "" : "dim"}` }, box, plate(c.label),
     h("div", { class: "truncate" }, h("div", { class: "t truncate", title: c.title }, c.display_title), folder),
@@ -201,8 +212,22 @@ function stepPlace() {
   const sel = selected();
   const sep = ob.target.includes("\\") ? "\\" : "/";
   const rootName = ob.target.split(/[\\/]/).filter(Boolean).pop() || ob.target;
-  const lines = sel.slice(0, 5).map((c, i) => `${i === Math.min(sel.length, 5) - 1 && sel.length <= 5 ? "└─" : "├─"} ${c.folder}`);
-  if (sel.length > 5) lines.push(`└─ … ${sel.length - 5} weitere`);
+  // Baum der künftigen Ordner: Module oben, Unterordner eingerückt
+  const tops = new Map();
+  for (const c of sel) {
+    const [top, ...rest] = c.folder.split("/");
+    if (!tops.has(top)) tops.set(top, []);
+    if (rest.length) tops.get(top).push(rest.join("/"));
+  }
+  const entries = [...tops.entries()];
+  const shown = entries.slice(0, 5);
+  const lines = [];
+  shown.forEach(([top, subs], i) => {
+    const last = i === shown.length - 1 && entries.length <= 5;
+    lines.push(`${last ? "└─" : "├─"} ${top}`);
+    subs.forEach((s, j) => lines.push(`${last ? "   " : "│  "}${j === subs.length - 1 ? "└─" : "├─"} ${s}`));
+  });
+  if (entries.length > 5) lines.push(`└─ … ${entries.length - 5} weitere`);
   const tree = h("div", { class: "tree" }, h("span", { class: "root" }, `${rootName}${sep}`), "\n", lines.join("\n"));
 
   const choose = async () => {
@@ -242,7 +267,7 @@ function stepPlace() {
 
   return h("div", {},
     h("h1", { class: "ob-title" }, "Wohin mit den Unterlagen?"),
-    h("p", { class: "ob-lead" }, "Pro Kurs ein Ordner. Eigene Notizen und markierte PDFs darin überschreibt Fach nie."),
+    h("p", { class: "ob-lead" }, "Pro Modul ein Ordner, Vorlesung und Übung darin. Eigene Notizen und markierte PDFs überschreibt Fach nie."),
     h("div", { class: "ob-form" },
       h("div", { class: "field" }, h("span", {}, "Uni-Ordner"), pathField),
       tree,
@@ -276,18 +301,26 @@ function stepLive() {
       h("div", { class: "truncate" }, h("div", { class: "t truncate" }, c.display_title),
         active && p.current ? h("div", { class: "mono muted truncate", style: { fontSize: "11px" } }, p.current.split("/").pop()) : null),
       h("div", { class: "inline", style: { justifyContent: "flex-end", flexWrap: "nowrap", gap: "8px" } },
-        h("span", { class: "n mono" }, done !== undefined ? done : ""), h("span", { class: "state" }, state)));
+        h("span", { class: "n mono" }, done !== undefined ? done : active && p.course_downloads ? p.course_downloads : ""),
+        h("span", { class: "state" }, state)));
   });
 
-  const frac = p.running && p.course_total ? (p.course_index - 1 + 0.5) / p.course_total : fin ? 1 : 0;
+  const frac = fin ? 1 : p.running ? p.fraction || 0 : 0;
   const okish = fin && (fin.status === "ok" || fin.status === "partial");
+  const live = !fin && p.running
+    ? h("div", { class: "inline", style: { justifyContent: "space-between", marginTop: "24px", fontSize: "13px", color: "var(--text-2)" } },
+      h("span", { class: "inline", style: { gap: "12px" } }, h("span", { class: "mono", style: { fontSize: "20px", color: "var(--text)", fontWeight: 500 } }, `${Math.round(frac * 100)} %`),
+        h("span", {}, p.phase === "network" ? "Verbinde mit ILIAS" : eta(p.eta))),
+      h("span", { class: "mono" }, [p.downloads ? plural(p.downloads, "Datei", "Dateien") : null, p.bytes ? bytes(p.bytes) : null].filter(Boolean).join(" · ")))
+    : null;
   return h("div", {},
     h("h1", { class: "ob-title" }, fin ? (okish ? "Alles abgelegt" : "Das hat nicht ganz geklappt") : "Hole deine Unterlagen"),
     h("p", { class: "ob-lead" }, fin
-      ? okish ? `${plural(total, "Datei", "Dateien")} aus ${plural(Object.keys(ob.live.done).length, "Kurs", "Kursen")}. ${fin.status === "partial" ? "Ein paar Kurse hatten Probleme – sie werden beim nächsten Abgleich erneut versucht." : "Ab jetzt landet hier nur noch, was neu ist."}`
+      ? okish ? `${plural(total, "Datei", "Dateien")} aus ${plural(new Set(courses.filter((c) => ob.live.done[c.id] !== undefined).map((c) => c.module)).size, "Modul", "Modulen")}. ${fin.status === "partial" ? "Ein paar Kurse hatten Probleme – sie werden beim nächsten Abgleich erneut versucht." : "Ab jetzt landet hier nur noch, was neu ist."}`
         : fin.message
       : "Der erste Abgleich dauert ein paar Minuten, danach geht es schnell. Du kannst das Fenster offen lassen."),
-    h("div", { class: "progress", style: { marginTop: "24px" } }, h("i", { style: { transform: `scaleX(${frac})` } })),
+    live,
+    h("div", { class: "progress", style: { marginTop: live ? "10px" : "24px" } }, h("i", { style: { transform: `scaleX(${frac})` } })),
     h("div", { class: "live-list" }, rows),
     fin ? h("div", { class: "ob-actions", style: { marginTop: "24px" } },
       button("Ordner öffnen", { icon: "folderOpen", onClick: () => api.post("/api/open", { target: "root" }).catch((e) => toast(e.message, "alert")) }),

@@ -1,8 +1,9 @@
-// Übersicht: Probleme (nur wenn es welche gibt), der Semester-Takt und der Eingang neuer Dateien.
+// Übersicht: Probleme (nur wenn es welche gibt), Kennzahlen, der Semester-Takt und der Eingang neuer Dateien.
 import { api } from "../api.js";
 import { button, h, icon, iconButton, mount, plate, toast } from "../dom.js";
-import { clock, dayLabel, plural, when } from "../format.js";
-import { courseById, refreshFeed, refreshState, refreshTimeline, store, subscribe } from "../store.js";
+import { bytes, clock, dayLabel, daysUntil, inDays, plural, shortDay, when } from "../format.js";
+import { courseById, modules, refreshExams, refreshFeed, refreshState, refreshTimeline, store, subscribe } from "../store.js";
+import { tip } from "../tooltip.js";
 import { startSync } from "./shell.js";
 import { taktCard } from "./takt.js";
 
@@ -10,16 +11,17 @@ export function mountHome(el) {
   let frame = 0;
   const render = () => {
     cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(() => mount(el, h("div", { class: "page" }, header(), banners(), taktCard({ onPick: pick }), feedSection())));
+    frame = requestAnimationFrame(() => mount(el, h("div", { class: "page" },
+      header(), banners(), stats(), taktCard({ onPick: pick }), feedSection())));
   };
-  const pick = (id) => {
-    store.ui.filter = id;
+  const pick = (module) => {
+    store.ui.filter = module;
     render();
     refreshFeed().catch(() => {});
   };
-  const off = subscribe((what) => { if (what !== "runs") render(); });
+  const off = subscribe((what) => { if (what !== "runs" && what !== "update") render(); });
   render();
-  Promise.all([refreshFeed(), refreshTimeline()]).catch((e) => toast(e.message, "alert"));
+  Promise.all([refreshFeed(), refreshTimeline(), refreshExams()]).catch((e) => toast(e.message, "alert"));
   return () => { off(); cancelAnimationFrame(frame); };
 }
 
@@ -34,6 +36,61 @@ function header() {
     unopened ? `${unopened} ungeöffnet` : null].filter(Boolean).join(" · ");
   return h("header", { class: "page-head" }, h("div", {}, h("h1", {}, title), h("p", { class: "meta" }, meta)));
 }
+
+// --- Kennzahlen -------------------------------------------------------------
+
+function stats() {
+  const t = store.timeline;
+  const storage = t?.storage;
+  const enabled = new Set(store.state.courses.filter((c) => c.enabled).map((c) => c.id));
+  const files = t ? t.courses.filter((c) => enabled.has(c.id)).reduce((n, c) => n + c.total, 0) : null;
+  const week = t && t.today_index >= 0 ? t.courses.filter((c) => enabled.has(c.id)).reduce((n, c) => n + (c.counts[t.today_index] || 0), 0) : 0;
+
+  const filesStat = h("div", { class: "kpi" },
+    h("span", { class: "label" }, "Dateien"),
+    h("span", { class: "figure" }, files === null ? "–" : files.toLocaleString("de-DE")),
+    h("span", { class: "sub" }, week ? `${week} in dieser Vorlesungswoche hochgeladen` : `in ${modules({ enabledOnly: true }).length} Modulen`));
+
+  const storageStat = h("div", { class: "kpi" },
+    h("span", { class: "label" }, "Speicher"),
+    h("span", { class: "figure" }, storage ? bytes(storage.bytes) : "–"),
+    h("span", { class: "sub" }, storage?.free ? `noch ${bytes(storage.free)} frei auf dem Laufwerk` : "im Uni-Ordner"));
+  if (t) tip(storageStat, () => storageTip(t));
+
+  return h("section", { class: "card stats", "aria-label": "Kennzahlen" }, filesStat, storageStat, examStat());
+}
+
+function storageTip(t) {
+  const byId = new Map(t.courses.map((c) => [c.id, c]));
+  const mods = modules({ enabledOnly: true })
+    .map((m) => ({ m, size: m.courses.reduce((n, c) => n + (byId.get(c.id)?.bytes || 0), 0) }))
+    .sort((a, b) => b.size - a.size).slice(0, 4);
+  return [h("div", { class: "tip-head" }, "Größte Module"),
+    h("ul", { class: "tip-list" }, mods.map(({ m, size }) => h("li", {}, `${m.label} · ${bytes(size)}`)))];
+}
+
+function examStat() {
+  const ex = store.exams;
+  const chosen = (ex?.modules || []).map((m) => ({ m, e: m.chosen })).filter(({ e }) => e && daysUntil(e.date) >= 0)
+    .sort((a, b) => a.e.date.localeCompare(b.e.date));
+  const go = () => { location.hash = "#/klausuren"; };
+  if (chosen.length) {
+    const { m, e } = chosen[0];
+    const d = daysUntil(e.date);
+    return h("div", { class: "kpi" },
+      h("span", { class: "label" }, "Nächste Klausur"),
+      h("span", { class: "figure" }, inDays(d)),
+      h("span", { class: "sub inline", style: { gap: "8px" } }, plate(m.label), `${shortDay(e.date)}${e.start ? ` · ${e.start}` : ""}`,
+        chosen.length > 1 ? h("button", { class: "link-btn", onclick: go }, `+${chosen.length - 1} weitere`) : null));
+  }
+  const candidates = (ex?.modules || []).reduce((n, m) => n + m.exams.filter((e) => e.status === "candidate").length, 0);
+  return h("div", { class: "kpi" },
+    h("span", { class: "label" }, "Klausuren"),
+    h("span", { class: "figure" }, candidates ? candidates : "–", candidates ? h("small", {}, "Termine gefunden") : null),
+    h("span", { class: "sub" }, h("button", { class: "link-btn", onclick: go }, candidates ? "Termine auswählen" : "Termine ansehen")));
+}
+
+// --- Probleme ---------------------------------------------------------------
 
 function banners() {
   const s = store.state;
@@ -82,9 +139,11 @@ async function relogin() {
   await refreshState();
 }
 
+// --- Eingang ------------------------------------------------------------------
+
 function feedSection() {
   const feed = store.feed;
-  const filter = store.ui.filter ? courseById(store.ui.filter) : null;
+  const filter = store.ui.filter ? modules().find((m) => m.module === store.ui.filter) : null;
   const unopened = (feed || []).filter((f) => !f.opened && f.exists).length;
   const head = h("div", { class: "section-head" },
     h("h2", {}, "Neu"),
@@ -144,7 +203,7 @@ async function reveal(f) {
 }
 
 async function markAllSeen() {
-  await api.post("/api/feed/seen", { course_id: store.ui.filter });
+  await api.post("/api/feed/seen", { module: store.ui.filter });
   await Promise.all([refreshFeed(), refreshState()]);
 }
 
@@ -156,7 +215,7 @@ function emptyFeed(filter) {
       h("div", { style: { marginTop: "16px" } }, button("Jetzt abgleichen", { kind: "primary", icon: "refresh", onClick: startSync })));
   }
   return h("div", { class: "card empty" },
-    h("h3", {}, filter ? `Nichts Neues in ${filter.display_title}` : "Nichts Neues in den letzten drei Wochen"),
+    h("h3", {}, filter ? `Nichts Neues in ${filter.title}` : "Nichts Neues in den letzten drei Wochen"),
     h("p", {}, "Sobald in ILIAS etwas dazukommt, steht es hier – ", h("span", { class: "marked" }, "markiert"),
-      ", bis du es öffnest. Zuletzt geprüft ", when(s.last_ok.ended * 1000), "."));
+      ", bis du es öffnest. Zuletzt geprüft ", when(s.last_ok.ended * 1000).replace(/\.$/, ""), "."));
 }

@@ -9,6 +9,8 @@ export const store = {
   feed: null,         // /api/feed
   timeline: null,     // /api/timeline
   runs: null,         // /api/runs
+  exams: null,        // /api/exams
+  update: null,       // /api/update
   ui: { filter: null, connected: true },
 };
 
@@ -28,7 +30,7 @@ export async function refreshState() {
 }
 
 export async function refreshFeed() {
-  const q = store.ui.filter ? `?course=${encodeURIComponent(store.ui.filter)}` : "";
+  const q = store.ui.filter ? `?module=${encodeURIComponent(store.ui.filter)}` : "";
   store.feed = await api.get(`/api/feed${q}`);
   notify("feed");
 }
@@ -44,3 +46,29 @@ export async function refreshRuns() {
 }
 
 export const courseById = (id) => store.state?.courses.find((c) => c.id === id);
+
+export async function refreshExams() {
+  store.exams = await api.get("/api/exams");
+  notify("exams");
+}
+
+export async function refreshUpdate() {
+  store.update = await api.get("/api/update");
+  notify("update");
+}
+
+// Module = erster Ordnerteil; Vorlesung + Übung eines Fachs sind ein Modul.
+export function modules({ enabledOnly = false } = {}) {
+  const map = new Map();
+  for (const c of store.state?.courses || []) {
+    if (enabledOnly && !c.enabled) continue;
+    if (!map.has(c.module)) map.set(c.module, { module: c.module, label: c.label, courses: [] });
+    map.get(c.module).courses.push(c);
+  }
+  for (const m of map.values()) {
+    m.title = m.courses.length === 1 && !m.courses[0].role ? m.courses[0].display_title : m.module;
+    m.grouped = m.courses.length > 1 || Boolean(m.courses[0].role);
+    m.enabled = m.courses.some((c) => c.enabled);
+  }
+  return [...map.values()];
+}

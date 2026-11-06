@@ -30,7 +30,7 @@ from PFERD.config import Config
 from PFERD.crawl.ilias import ilias_web_crawler as _crawler_mod
 from PFERD.crawl.ilias import kit_ilias_html as _html_mod
 from PFERD.crawl.ilias.ilias_web_crawler import IliasWebCrawler, IliasWebCrawlerSection
-from PFERD.logging import log
+from PFERD.logging import ProgressBar, log
 from rich.console import Console
 from rich.live import Live
 
@@ -51,6 +51,26 @@ def fixed_urljoin(base: Any, url: Any, allow_fragments: bool = True) -> Any:
 
 
 _installed = False
+_byte_hook: Optional[Callable[[int], None]] = None
+
+
+def set_byte_hook(fn: Optional[Callable[[int], None]]) -> None:
+    """Wird bei jedem geladenen Datenstück mit der Byte-Zahl aufgerufen (für die Fortschrittsanzeige)."""
+    global _byte_hook
+    _byte_hook = fn
+
+
+_orig_advance = ProgressBar.advance
+
+
+def _advance(self: ProgressBar, amount: float = 1) -> None:
+    _orig_advance(self, amount)
+    # Nur Download-Balken zählen Bytes; Crawl-Balken zählen Seiten.
+    if _byte_hook is not None and getattr(self, "_progress", None) is log._download_progress:  # noqa: SLF001
+        try:
+            _byte_hook(int(amount))
+        except Exception:
+            pass
 
 
 def install(base_url: str) -> None:
@@ -75,6 +95,7 @@ def install(base_url: str) -> None:
     # Fortschrittsbalken abschalten; exclusive_output() verlangt aber „Fortschritt läuft“.
     log.show_progress = _no_progress  # type: ignore[method-assign]
     log._showing_progress = True  # noqa: SLF001
+    ProgressBar.advance = _advance  # type: ignore[method-assign]
     _installed = True
 
 
@@ -157,7 +178,23 @@ def build_config(working_dir: Path, sections: dict[str, dict[str, str]]) -> Conf
 DEFAULT_TRANSFORM = "\\..+ -name-re-> !\nDescription\\.html -name-re-> !"
 
 
-def course_section(base_url: str, client_id: str, target: str, output_dir: str, videos: bool) -> dict[str, str]:
+def _quote(s: str) -> str:
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def rules_transform(rules: list[dict]) -> str:
+    """Eigene Regeln aus dem Datei-Browser → PFERD-Transform-Zeilen (stehen vor den Standardregeln)."""
+    lines = []
+    for r in rules:
+        src, dst = r.get("src"), r.get("dst")
+        if not src:
+            continue
+        lines.append(f"{_quote(src)} --> {_quote(dst) if dst else '!'}")
+    return "\n".join(lines)
+
+
+def course_section(base_url: str, client_id: str, target: str, output_dir: str, videos: bool,
+                   rules: Optional[list[dict]] = None) -> dict[str, str]:
     return {
         "type": "ilias-web",
         "base_url": base_url,
@@ -173,5 +210,5 @@ def course_section(base_url: str, client_id: str, target: str, output_dir: str, 
         "links": "ignore",
         "videos": "yes" if videos else "no",
         "forums": "no",
-        "transform": DEFAULT_TRANSFORM,
+        "transform": "\n".join(x for x in (rules_transform(rules or []), DEFAULT_TRANSFORM) if x),
     }

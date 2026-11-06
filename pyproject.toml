@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fach"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Holt die Unterlagen deiner ILIAS-Kurse (Uni Köln) automatisch auf deinen Rechner."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,6 +12,7 @@ license = { text = "MIT" }
 dependencies = [
     "PFERD==3.10.1",          # gepinnt: fach/ilias/pferd_runtime.py kennt Interna dieser Version
     "platformdirs>=4.2",
+    "pypdf>=5",               # Klausurtermine aus PDFs lesen
 ]
 
 [project.optional-dependencies]
@@ -20,6 +21,9 @@ dev = ["pytest>=8"]
 
 [project.scripts]
 fach = "fach.__main__:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "fach.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["fach*"]

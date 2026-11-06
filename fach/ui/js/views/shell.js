@@ -1,13 +1,15 @@
-// Rahmen: Sidebar mit Navigation und dem Abgleich-Status unten. Der Status aktualisiert sich
-// live (SSE), ohne die Seite daneben neu zu zeichnen.
+// Rahmen: Sidebar mit Navigation, Update-Hinweis und dem Abgleich-Status unten. Der Status
+// aktualisiert sich live (SSE), ohne die Seite daneben neu zu zeichnen.
 import { api } from "../api.js";
 import { h, icon, mount, plate, spinner, toast } from "../dom.js";
-import { plural, upcoming, when } from "../format.js";
+import { bytes, eta, plural, upcoming, when } from "../format.js";
 import { courseById, refreshState, store } from "../store.js";
 
 export const ROUTES = [
   { id: "uebersicht", label: "Übersicht", icon: "inbox" },
   { id: "kurse", label: "Kurse", icon: "book" },
+  { id: "dateien", label: "Dateien", icon: "folder" },
+  { id: "klausuren", label: "Klausuren", icon: "calendar" },
   { id: "einstellungen", label: "Einstellungen", icon: "settings" },
 ];
 
@@ -37,10 +39,16 @@ export async function startSync() {
   }
 }
 
-export function renderShell(root, active) {
+function navCounts() {
   const s = store.state;
   const unopened = s.courses.reduce((n, c) => n + (c.enabled ? c.unopened : 0), 0);
-  const counts = { uebersicht: unopened, kurse: s.courses.filter((c) => c.enabled).length };
+  const modules = new Set(s.courses.filter((c) => c.enabled).map((c) => c.module)).size;
+  return { uebersicht: unopened, kurse: modules };
+}
+
+export function renderShell(root, active) {
+  const s = store.state;
+  const counts = navCounts();
   const syncBox = h("div", { class: "sync-box", "aria-live": "polite" });
   const main = h("main", { class: "main" });
 
@@ -49,14 +57,38 @@ export function renderShell(root, active) {
     h("div", { class: "account mono truncate", title: s.username }, `${s.uni.name} · ${s.username}`),
     h("nav", { class: "nav", "aria-label": "Bereiche" },
       ROUTES.map((r, i) => h("a", {
-        href: `#/${r.id}`, "aria-current": r.id === active ? "page" : null, title: `${r.label} (${i + 1})`,
+        href: `#/${r.id}`, "aria-current": r.id === active ? "page" : null, title: `${r.label} (${i + 1})`, dataset: { route: r.id },
       }, icon(r.icon), r.label,
       counts[r.id] ? h("span", { class: `count ${r.id === "uebersicht" ? "new" : ""}` }, counts[r.id]) : null))),
-    syncBox,
+    h("div", { style: { marginTop: "auto" } }, h("div", { class: "update-slot" }), syncBox),
   );
   mount(root, h("div", { class: "app" }, sidebar, main));
   updateSyncBox(syncBox);
+  updatePill();
   return { main, syncBox };
+}
+
+export function refreshNavCounts() {
+  const counts = navCounts();
+  document.querySelectorAll(".nav a").forEach((a) => {
+    const id = a.dataset.route;
+    let badge = a.querySelector(".count");
+    if (!counts[id]) { badge?.remove(); return; }
+    if (!badge) { badge = h("span", { class: `count ${id === "uebersicht" ? "new" : ""}` }); a.append(badge); }
+    badge.textContent = counts[id];
+  });
+}
+
+// Update lädt / wird installiert: kleiner Hinweis über dem Abgleich-Status
+export function updatePill() {
+  const slot = document.querySelector(".update-slot");
+  const u = store.update;
+  if (!slot) return;
+  if (!u || !["downloading", "ready", "installing"].includes(u.status)) { slot.replaceChildren(); return; }
+  const text = u.status === "installing" ? "Update wird installiert, Fach startet neu"
+    : u.status === "ready" ? `Update ${u.latest} bereit`
+      : `Update ${u.latest} lädt · ${Math.round((u.progress || 0) * 100)} %`;
+  mount(slot, h("div", { class: "update-pill" }, u.status === "ready" ? icon("check", 14) : spinner(14), text));
 }
 
 export function updateSyncBox(box = document.querySelector(".sync-box")) {
@@ -66,13 +98,16 @@ export function updateSyncBox(box = document.querySelector(".sync-box")) {
 
   if (p.running) {
     const course = courseById(p.course_id);
-    const frac = p.course_total ? (p.course_index - 1 + 0.5) / p.course_total : 0;
-    const bar = h("div", { class: `progress ${p.phase === "network" ? "indeterminate" : ""}` },
-      h("i", { style: p.phase === "network" ? {} : { transform: `scaleX(${frac.toFixed(3)})` } }));
+    const pct = Math.round((p.fraction || 0) * 100);
+    const indeterminate = p.phase === "network";
+    const bar = h("div", { class: `progress ${indeterminate ? "indeterminate" : ""}` },
+      h("i", { style: indeterminate ? {} : { transform: `scaleX(${(p.fraction || 0).toFixed(3)})` } }));
+    const details = [p.downloads ? plural(p.downloads, "Datei", "Dateien") : null, p.bytes ? bytes(p.bytes) : null].filter(Boolean).join(" · ");
     mount(box,
-      h("div", { class: "sync-head" }, spinner(), p.phase === "network" ? "Verbinde mit ILIAS" : "Gleicht ab",
-        p.course_total ? h("span", { class: "mono muted", style: { marginLeft: "auto" } }, `${p.course_index}/${p.course_total}`) : null),
+      h("div", { class: "sync-head" }, spinner(), indeterminate ? "Verbinde mit ILIAS" : "Gleicht ab",
+        indeterminate ? null : h("span", { class: "sync-pct" }, `${pct} %`)),
       bar,
+      h("div", { class: "sync-meta" }, h("span", {}, indeterminate ? "" : eta(p.eta)), h("span", { class: "mono" }, details)),
       course ? h("div", { class: "inline", style: { gap: "8px", flexWrap: "nowrap" } }, plate(course.label),
         h("span", { class: "sync-file mono truncate", title: p.current }, p.current ? p.current.split("/").pop() : course.display_title)) : null,
       h("button", { class: "btn btn-sm btn-quiet", onclick: () => api.post("/api/sync/cancel") }, "Abbrechen"),
@@ -118,7 +153,7 @@ export function updateSyncBox(box = document.querySelector(".sync-box")) {
 
 export function runToast(run) {
   if (run.status === "ok" || run.status === "partial") {
-    toast(run.added ? `${plural(run.added, "neue Datei", "neue Dateien")} aus ILIAS` : "Alles aktuell, nichts Neues");
+    toast(run.added ? `${plural(run.added, "neue Datei", "neue Dateien")} aus ILIAS` : run.message || "Alles aktuell, nichts Neues");
   } else if (run.status !== "cancelled") {
     toast(run.message || "Abgleich fehlgeschlagen", "alert");
   }

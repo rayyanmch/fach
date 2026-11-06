@@ -82,3 +82,21 @@ class MacPlatform:
 
     def reveal_path(self, path: Path) -> None:
         subprocess.Popen(["open", str(path)] if path.is_dir() else ["open", "-R", str(path)])
+
+    def _osascript(self, script: str, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["osascript", "-e", script, *args], capture_output=True, text=True, timeout=120)
+
+    def open_with(self, path: Path) -> None:
+        res = self._osascript("on run argv\nreturn POSIX path of (choose application as alias)\nend run")
+        app = res.stdout.strip()
+        if res.returncode == 0 and app:
+            subprocess.Popen(["open", "-a", app, str(path)])
+
+    def copy_files(self, paths: list[Path]) -> None:
+        script = "on run argv\nset the clipboard to (POSIX file (item 1 of argv))\nend run"
+        self._osascript(script, str(paths[0]))
+
+    def trash(self, path: Path) -> None:
+        res = self._osascript('on run argv\ntell application "Finder" to delete (POSIX file (item 1 of argv))\nend run', str(path))
+        if res.returncode != 0:
+            raise OSError(res.stderr.strip() or "In den Papierkorb verschieben fehlgeschlagen.")

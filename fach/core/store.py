@@ -37,6 +37,34 @@ CREATE TABLE IF NOT EXISTS files (
 );
 CREATE INDEX IF NOT EXISTS files_at ON files(at DESC);
 CREATE INDEX IF NOT EXISTS files_course ON files(course_id);
+CREATE TABLE IF NOT EXISTS course_stats (
+    course_id  TEXT PRIMARY KEY,
+    regular_s  REAL,                  -- übliche Dauer eines normalen Abgleichs (gleitender Mittelwert)
+    initial_s  REAL,                  -- Dauer des ersten Abgleichs
+    updated    REAL
+);
+CREATE TABLE IF NOT EXISTS exams (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_id  TEXT NOT NULL,         -- Kurs, in dessen Unterlagen der Termin steht (bzw. gewählt wurde)
+    date       TEXT NOT NULL,         -- JJJJ-MM-TT
+    start      TEXT NOT NULL DEFAULT '',  -- HH:MM, leer = unbekannt
+    end        TEXT NOT NULL DEFAULT '',
+    room       TEXT NOT NULL DEFAULT '',
+    kind       TEXT NOT NULL DEFAULT 'Klausur',
+    note       TEXT NOT NULL DEFAULT '',
+    source     TEXT NOT NULL DEFAULT '',  -- Datei relativ zum Kursordner
+    page       INTEGER,
+    snippet    TEXT NOT NULL DEFAULT '',
+    origin     TEXT NOT NULL,         -- found | manual
+    status     TEXT NOT NULL DEFAULT 'candidate',  -- candidate | chosen | dismissed
+    created    REAL NOT NULL,
+    UNIQUE(course_id, date, start, origin)
+);
+CREATE TABLE IF NOT EXISTS scanned (
+    path    TEXT PRIMARY KEY,         -- absoluter Pfad einer schon nach Klausurterminen durchsuchten Datei
+    mtime   REAL NOT NULL,
+    size    INTEGER NOT NULL
+);
 """
 
 
@@ -125,15 +153,15 @@ class Store:
             [(run_id, course_id, p, kind, int(initial), now) for p in paths],
         )
 
-    def feed(self, limit: int = 200, since: float | None = None, course_id: str | None = None) -> list[FileEvent]:
+    def feed(self, limit: int = 200, since: float | None = None, course_ids: list[str] | None = None) -> list[FileEvent]:
         q = "SELECT * FROM files WHERE initial = 0"
         args: list[Any] = []
         if since is not None:
             q += " AND at >= ?"
             args.append(since)
-        if course_id:
-            q += " AND course_id = ?"
-            args.append(course_id)
+        if course_ids is not None:
+            q += f" AND course_id IN ({','.join('?' * len(course_ids)) or 'NULL'})"
+            args.extend(course_ids)
         q += " ORDER BY at DESC, id DESC LIMIT ?"
         args.append(limit)
         return [self._file(r) for r in self._db.execute(q, args).fetchall()]
@@ -146,10 +174,22 @@ class Store:
         self._db.execute("UPDATE files SET opened_at = ? WHERE id = ? AND opened_at IS NULL",
                          (time.time(), event_id))
 
-    def mark_all_opened(self, course_id: str | None = None) -> None:
-        if course_id:
-            self._db.execute("UPDATE files SET opened_at = ? WHERE opened_at IS NULL AND course_id = ?",
-                             (time.time(), course_id))
+    def mark_opened_path(self, course_id: str, rel_path: str) -> None:
+        self._db.execute("UPDATE files SET opened_at = ? WHERE course_id = ? AND rel_path = ? AND opened_at IS NULL",
+                         (time.time(), course_id, rel_path))
+
+    def rename_paths(self, course_id: str, old: str, new: str) -> None:
+        """Verlauf nachziehen, wenn eine Datei oder ein Ordner im Datei-Browser umbenannt wurde."""
+        self._db.execute("UPDATE files SET rel_path = ? WHERE course_id = ? AND rel_path = ?", (new, course_id, old))
+        self._db.execute(
+            "UPDATE files SET rel_path = ? || substr(rel_path, ?) WHERE course_id = ? AND rel_path LIKE ? ESCAPE '\\'",
+            (new, len(old) + 1, course_id, old.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%"))
+
+    def mark_all_opened(self, course_ids: list[str] | None = None) -> None:
+        if course_ids:
+            self._db.execute(
+                f"UPDATE files SET opened_at = ? WHERE opened_at IS NULL AND course_id IN ({','.join('?' * len(course_ids))})",
+                (time.time(), *course_ids))
         else:
             self._db.execute("UPDATE files SET opened_at = ? WHERE opened_at IS NULL", (time.time(),))
 
@@ -166,6 +206,60 @@ class Store:
 
     def forget_course(self, course_id: str) -> None:
         self._db.execute("DELETE FROM files WHERE course_id = ?", (course_id,))
+        self._db.execute("DELETE FROM course_stats WHERE course_id = ?", (course_id,))
+        self._db.execute("DELETE FROM exams WHERE course_id = ? AND origin = 'found'", (course_id,))
+
+    # --- Dauer je Kurs (für die Restzeit) -------------------------------------
+
+    def course_durations(self) -> dict[str, dict[str, float]]:
+        rows = self._db.execute("SELECT * FROM course_stats").fetchall()
+        return {r["course_id"]: {"regular_s": r["regular_s"], "initial_s": r["initial_s"]} for r in rows}
+
+    def record_duration(self, course_id: str, seconds: float, initial: bool) -> None:
+        col = "initial_s" if initial else "regular_s"
+        row = self._db.execute(f"SELECT {col} v FROM course_stats WHERE course_id = ?", (course_id,)).fetchone()
+        old = row["v"] if row else None
+        value = seconds if old is None or initial else 0.6 * seconds + 0.4 * old
+        self._db.execute(
+            f"INSERT INTO course_stats(course_id, {col}, updated) VALUES (?, ?, ?) "
+            f"ON CONFLICT(course_id) DO UPDATE SET {col} = excluded.{col}, updated = excluded.updated",
+            (course_id, value, time.time()))
+
+    # --- Klausuren -----------------------------------------------------------
+
+    def exams(self) -> list[dict[str, Any]]:
+        return [dict(r) for r in self._db.execute("SELECT * FROM exams ORDER BY date, start").fetchall()]
+
+    def upsert_found_exam(self, e: dict[str, Any]) -> None:
+        """Gefundenen Termin speichern. Bereits gewählte/verworfene behalten ihren Status."""
+        self._db.execute(
+            "INSERT INTO exams(course_id, date, start, end, room, kind, source, page, snippet, origin, created) "
+            "VALUES (:course_id, :date, :start, :end, :room, :kind, :source, :page, :snippet, 'found', :created) "
+            "ON CONFLICT(course_id, date, start, origin) DO UPDATE SET "
+            "end = CASE WHEN excluded.end != '' THEN excluded.end ELSE exams.end END, "
+            "room = CASE WHEN excluded.room != '' THEN excluded.room ELSE exams.room END",
+            {"end": "", "room": "", "kind": "Klausur", "page": None, "snippet": "", "created": time.time(), **e})
+
+    def add_manual_exam(self, e: dict[str, Any]) -> int:
+        cur = self._db.execute(
+            "INSERT INTO exams(course_id, date, start, end, room, kind, note, origin, status, created) "
+            "VALUES (:course_id, :date, :start, :end, :room, :kind, :note, 'manual', 'chosen', :created) "
+            "ON CONFLICT(course_id, date, start, origin) DO UPDATE SET status = 'chosen', room = excluded.room, "
+            "end = excluded.end, note = excluded.note, kind = excluded.kind",
+            {"end": "", "room": "", "kind": "Klausur", "note": "", "created": time.time(), **e})
+        return int(cur.lastrowid or 0)
+
+    def set_exam_status(self, ids: list[int], status: str) -> None:
+        self._db.executemany("UPDATE exams SET status = ? WHERE id = ?", [(status, i) for i in ids])
+
+    def delete_manual_exam(self, exam_id: int) -> None:
+        self._db.execute("DELETE FROM exams WHERE id = ? AND origin = 'manual'", (exam_id,))
+
+    def scanned_state(self) -> dict[str, tuple[float, int]]:
+        return {r["path"]: (r["mtime"], r["size"]) for r in self._db.execute("SELECT * FROM scanned").fetchall()}
+
+    def mark_scanned(self, items: list[tuple[str, float, int]]) -> None:
+        self._db.executemany("INSERT OR REPLACE INTO scanned(path, mtime, size) VALUES (?, ?, ?)", items)
 
     @staticmethod
     def _file(r: sqlite3.Row) -> FileEvent:

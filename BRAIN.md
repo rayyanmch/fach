@@ -13,17 +13,23 @@ Zielgruppe ausdrücklich auch ohne Technikwissen → Onboarding ohne Konfigurati
 
 ```
 ui/ (Vanilla-JS, ES-Module)          ← nur über HTTP + Token
-  └─ server/http.py  (aiohttp, 127.0.0.1, Guard: Token/Host/Origin, CSP)
-       └─ server/api.py  (JSON ↔ Dienste; Pfad-/Dateiregeln)
-            ├─ sync/engine.py   (Abgleich, Sperre, Verlauf, Mitteilungen)
-            │    └─ ilias/models.IliasBackend  ← Protokoll
-            │         ├─ ilias/real.py  → ilias/pferd_runtime.py → PFERD 3.10.1 (gepinnt)
-            │         └─ ilias/demo.py  (Demo-ILIAS, schreibt Platzhalter-PDFs)
-            ├─ sync/timeline.py (Semester-Takt aus Datei-mtimes)
-            ├─ core/*  (config.json, fach.db, Sperre, Bus, Uni-Profil, Namen, Zeitplan-Rechnung)
-            └─ platform/* (Aufgabenplanung/launchd, Mitteilungen, Öffnen)
+  └─ server/http.py  (aiohttp, 127.0.0.1, Guard: Token/Host/Origin, CSP; registriert alle Routen)
+       ├─ server/api.py        (Zustand, Kurse/Module, Einstellungen, Öffnen; Pfad-/Dateiregeln)
+       ├─ server/files_api.py  (Datei-Browser: Liste, Suche, Öffnen mit, Kopieren, Umbenennen, Papierkorb, Ziehen)
+       ├─ server/exams_api.py  (Klausuren: wählen, eigene, ausblenden, ICS)
+       ├─ server/system_api.py (eigene Titelleiste, Updates)
+       ├─ sync/engine.py   (Abgleich, Sperre, Verlauf, Mitteilungen) + sync/progress.py (Prozent/Restzeit)
+       │    └─ ilias/models.IliasBackend  ← Protokoll
+       │         ├─ ilias/real.py  → ilias/pferd_runtime.py → PFERD 3.10.1 (gepinnt)
+       │         └─ ilias/demo.py  (Demo-ILIAS, Platzhalter-PDFs + echte Orga-PDFs mit Klausurterminen)
+       ├─ insights/exams.py + service.py (Klausurtermine aus PDFs, im Hintergrund nach jedem Abgleich)
+       ├─ sync/timeline.py (Semester-Takt, Speicher, Hover-Daten aus Datei-mtimes)
+       ├─ update.py        (latest.json aus GitHub-Releases, SHA-256, stiller Installer)
+       ├─ core/*  (config.json, fach.db, Sperre, Bus, Uni-Profil, Namen/Module, Zeitplan-Rechnung)
+       └─ platform/* (Aufgabenplanung/launchd, Mitteilungen, Öffnen, Öffnen mit, Zwischenablage, Papierkorb;
+                      windows_window.py = rahmenloses Fenster + natives Datei-Ziehen)
 app.py = Kompositionswurzel (einziger Ort, der alles zusammensteckt)
-desktop.py = Startmodi: Fenster (pywebview) | Browser | --sync (Hintergrund)
+desktop.py = Startmodi: Fenster (pywebview, unter Windows rahmenlos) | Browser | --sync (Hintergrund + stilles Update)
 ```
 
 Abhängigkeitsrichtung: ui → server → (sync, core, platform) → ilias → PFERD. Nie umgekehrt.
@@ -40,6 +46,9 @@ Abhängigkeitsrichtung: ui → server → (sync, core, platform) → ilias → P
 | GUI-Prozess ↔ Hintergrund-Prozess | `sync.lock` (flock/msvcrt), `instance.json` (Port+Token, 600), SQLite WAL | `--sync` übergibt an offenes Fenster; sonst läuft es selbst. Sperre gibt das OS beim Prozessende frei |
 | Engine ↔ PFERD | `FachCrawler` (Unterklasse), `AppAuthenticator`, Modul-`urljoin` ersetzt | PFERD-Update ändert Interna → Version gepinnt, Tests gegen Schein-ILIAS |
 | config.json ↔ OS-Zeitplan | `Api.reconcile_schedule()` bei Start + jeder Zeitplan-Änderung | Zeitplan ist **abgeleitet**, nie Quelle der Wahrheit |
+| Datei-Browser ↔ PFERD | Umbenennen/Papierkorb schreiben `Course.rules` → `pferd_runtime.rules_transform()` | ohne Regel lädt der nächste Abgleich das Original wieder herunter |
+| UI ↔ rahmenloses Fenster | `POST /api/window` → `WindowsChrome` → `BeginInvoke` auf den WinForms-UI-Thread → `WM_NCLBUTTONDOWN` | Klick muss noch gedrückt sein, wenn die Nachricht ankommt (HTTP-Latenz ~20 ms) |
+| Hintergrund-Thread ↔ SQLite | Klausur-Scan und Timeline laufen im Executor | **keine** DB-Zugriffe im Executor – eine Verbindung, ein Thread (Daten vorher/nachher im Loop) |
 
 ## Invarianten
 
@@ -53,6 +62,11 @@ Abhängigkeitsrichtung: ui → server → (sync, core, platform) → ilias → P
 7. PFERD-Berichte und Cookies liegen im App-Datenordner (`data/pferd/`), nicht im Uni-Ordner.
 8. Kursänderungen erst prüfen, dann umbenennen/speichern (`_apply_courses` → `_commit`), nie halb.
 9. Nur `app.py` kennt konkrete Implementierungen; Demo-Modus fasst nie den echten Zeitplan oder Schlüsselbund an.
+10. Ein Modul = erster Ordnerteil (`Course.module`). Kursordner dürfen nicht ineinander liegen (sonst überschneiden sich
+    PFERD-Ausgabeordner). Verschieben passiert zweiphasig (`_commit`): erst alles zur Seite, dann ans Ziel.
+11. Pro Modul höchstens ein gewählter Klausurtermin. Gefundene Termine sind Vorschläge mit Quelle, nie stillschweigend „wahr“.
+12. Updates nur über den Installer, nur wenn Fach per Installer installiert ist, nur mit passender SHA-256 aus latest.json,
+    nie während Einrichtung oder Abgleich.
 
 ## Entscheidungen (kurz, mit Grund)
 
@@ -71,16 +85,27 @@ Abhängigkeitsrichtung: ui → server → (sync, core, platform) → ilias → P
   App-ID `Fach.Desktop` per Installer-Verknüpfung und HKCU-Registry.
 - **Semester-Takt aus Datei-mtimes:** PFERD setzt das Upload-Datum → volle Historie schon nach dem ersten Lauf.
 - **Vanilla-JS ohne Build-Schritt:** nichts zu bündeln, PyInstaller nimmt die Dateien wie sie sind.
+- **Restzeit in Zeit, nicht in Dateien:** PFERD kennt die Dateizahl erst am Ende. Dauer je Kurs wird in `course_stats`
+  gemerkt (erster Abgleich und normale getrennt); ohne Grundlage zeigt die UI „wird geschätzt“ statt einer erfundenen Zahl.
+- **Module automatisch, Umzug nur mit Zustimmung:** Neue Einrichtungen werden gleich gruppiert; bestehende bekommen
+  einen Vorschlag im Kurse-Tab, weil dabei Dateien verschoben werden.
+- **Klausuren aus PDFs mit pypdf:** Orga-artige Dateien ganz, sonst erste 12 + letzte 6 Seiten. Anmelde-, Einsichts-,
+  Bonus- und Abgabedaten werden ausgeschlossen. Demo enthält echte Text-PDFs, damit der Tab ohne Uni testbar ist.
+- **Updates über `releases/latest/download/latest.json`** statt GitHub-API: kein Rate-Limit (Wohnheim-NAT!).
+- **Eigene Titelleiste wie Tauri/wry:** rahmenlos + `WM_NCLBUTTONDOWN` (Ziehen/Skalieren macht Windows). Maximieren
+  selbst gebaut (rahmenlose WinForms würden die Taskleiste verdecken). Abschaltbar: Einstellungen → Fenster.
 
 ## Nicht verifiziert (ehrlich)
 
 - **Kurssuche gegen echtes ILIAS Köln** – am 06.11.2026 abends war ILIAS nicht erreichbar (Timeout, auch
   außerhalb der Sandbox). Parser ist gegen synthetisches HTML getestet. **Erster echter Lauf: prüfen, ob
   „Meine Kurse“ alle Kurse liefert.** Fallback in der UI: Kurs per Link hinzufügen.
-- **Windows:** In CI (windows-latest) laufen alle Tests, und `Fach.exe --selftest` bestätigt im fertigen Paket:
-  PFERD + Fix, `WinVaultKeyring`, pywebview 6, Oberfläche, Schriften (Lauf vom 06.11.2026). **Nicht** interaktiv
-  geprüft: Aufgabenplanung ohne Admin, Toasts mit App-ID, Ordnerdialog, WebView2-Rückfall.
-  → Checkliste in README „Auf Windows testen“.
+- **Windows:** In CI laufen alle Tests, und `Fach.exe --selftest` bestätigt im fertigen Paket PFERD + Fix,
+  `WinVaultKeyring`, pywebview 6, pypdf, Oberfläche. 0.1 lief bei Rayyan auf Windows (07.11.2026).
+  **In 0.2 neu und nur auf Windows prüfbar:** rahmenloses Fenster (Ziehen, Kanten, Doppelklick, Maximieren),
+  natives Datei-Ziehen nach außen, Kopieren als Datei (CF_HDROP), „Öffnen mit“, Papierkorb, stilles Update mit Neustart.
+  Fehler davon landen in `%LOCALAPPDATA%\Fach\logs\app.log`. → Checkliste in README.
+- **Auto-Update** funktioniert erst, wenn die Releases öffentlich abrufbar sind (Repo privat → 404).
 - macOS-Build und launchd mit gebauter App ungetestet (nicht Ziel dieser Runde).
 
 ## Entwicklung
@@ -96,5 +121,5 @@ der Server-Start einen echten Zeitplan (launchd/Aufgabenplanung), sobald `onboar
 ## Offene Fragen an Rayyan
 
 - Name „Fach“ ist ein Arbeitstitel (Doppelsinn: Studienfach / Postfach). Passt er?
-- Repo privat lassen bis zur Verteilung, dann öffentlich (Vertrauen)?
+- Repo öffentlich machen? Nötig für Auto-Updates (oder ein separates öffentliches Release-Repo).
 - Soll Fach deine bestehende Ordnerstruktur (eigene PFERD-Regeln) übernehmen können? → Idee 8 in docs/IDEEN.md.

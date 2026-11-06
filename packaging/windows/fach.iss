@@ -46,7 +46,15 @@ Name: "{userdesktop}\Fach"; Filename: "{app}\Fach.exe"; AppUserModelID: "Fach.De
 
 [Run]
 Filename: "{app}\Fach.exe"; Description: "Fach jetzt starten"; Flags: nowait postinstall skipifsilent
+; Stilles Update aus der App: danach neu starten. Update aus dem Hintergrund-Abgleich (/nolaunch=1): nicht.
+Filename: "{app}\Fach.exe"; Flags: nowait; Check: ShouldRelaunch
 
 [UninstallRun]
 ; Zeitplan aus der Aufgabenplanung entfernen. Uni-Dateien und Einstellungen bleiben.
 Filename: "{app}\Fach.exe"; Parameters: "--remove-schedule"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveSchedule"
+
+[Code]
+function ShouldRelaunch: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:nolaunch|0}') = '0');
+end;

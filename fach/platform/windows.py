@@ -169,6 +169,89 @@ class WindowsPlatform:
             # explorer erwartet /select,"Pfad" als ein Stück; Windows-Pfade enthalten kein ".
             subprocess.Popen(f'explorer /select,"{path}"', creationflags=_NO_WINDOW)
 
+    def open_with(self, path: Path) -> None:
+        _open_with(path)
+
+    def copy_files(self, paths: list[Path]) -> None:
+        _copy_files(paths)
+
+    def trash(self, path: Path) -> None:
+        _trash(path)
+
+
+# --- Datei-Browser: Öffnen mit, Zwischenablage, Papierkorb (ctypes, ohne Zusatzpakete) -----------
+
+def _open_with(path: Path) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    class OPENASINFO(ctypes.Structure):
+        _fields_ = [("pcszFile", wintypes.LPCWSTR), ("pcszClass", wintypes.LPCWSTR), ("oaifInFlags", ctypes.c_int)]
+
+    info = OPENASINFO(str(path), None, 0x1 | 0x4)  # OAIF_ALLOW_REGISTRATION | OAIF_EXEC
+    hr = ctypes.windll.shell32.SHOpenWithDialog(None, ctypes.byref(info))  # type: ignore[attr-defined]
+    if hr not in (0, -2147023673):  # S_OK, abgebrochen (HRESULT_FROM_WIN32(ERROR_CANCELLED))
+        subprocess.Popen(["rundll32.exe", "shell32.dll,OpenAs_RunDLL", str(path)], creationflags=_NO_WINDOW)
+
+
+def _copy_files(paths: list[Path]) -> None:
+    """Dateien wie im Explorer kopieren (CF_HDROP) – einfügbar im Explorer, in Chats, in Browser-Uploads."""
+    import ctypes
+    import struct
+    import time as _time
+    from ctypes import wintypes
+
+    k32, u32 = ctypes.windll.kernel32, ctypes.windll.user32  # type: ignore[attr-defined]
+    k32.GlobalAlloc.restype = wintypes.HGLOBAL
+    k32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    k32.GlobalLock.restype = ctypes.c_void_p
+    k32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    k32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    u32.OpenClipboard.argtypes = [wintypes.HWND]
+    u32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    u32.SetClipboardData.restype = wintypes.HANDLE
+    u32.RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]
+
+    def global_blob(data: bytes):
+        h = k32.GlobalAlloc(0x0042, len(data))  # GMEM_MOVEABLE | GMEM_ZEROINIT
+        ptr = k32.GlobalLock(h)
+        ctypes.memmove(ptr, data, len(data))
+        k32.GlobalUnlock(h)
+        return h
+
+    files = ("\0".join(str(p) for p in paths) + "\0\0").encode("utf-16-le")
+    hdrop = global_blob(struct.pack("<IiiII", 20, 0, 0, 0, 1) + files)  # DROPFILES, fWide = 1
+    effect = global_blob(struct.pack("<I", 1))  # DROPEFFECT_COPY
+    for _ in range(20):
+        if u32.OpenClipboard(None):
+            break
+        _time.sleep(0.05)
+    else:
+        raise RuntimeError("Die Zwischenablage ist gerade belegt.")
+    try:
+        u32.EmptyClipboard()
+        if not u32.SetClipboardData(15, hdrop):  # CF_HDROP
+            raise RuntimeError("Konnte nicht in die Zwischenablage kopieren.")
+        u32.SetClipboardData(u32.RegisterClipboardFormatW("Preferred DropEffect"), effect)
+    finally:
+        u32.CloseClipboard()
+
+
+def _trash(path: Path) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT), ("pFrom", wintypes.LPCWSTR),
+                    ("pTo", wintypes.LPCWSTR), ("fFlags", ctypes.c_ushort), ("fAnyOperationsAborted", wintypes.BOOL),
+                    ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR)]
+
+    # pFrom muss doppelt nullterminiert sein; ctypes hängt eine Null an, wir die zweite.
+    op = SHFILEOPSTRUCTW(None, 3, str(path) + "\0", None, 0x4 | 0x10 | 0x40 | 0x400, False, None, None)
+    res = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))  # type: ignore[attr-defined]
+    if res != 0 or op.fAnyOperationsAborted:
+        raise OSError(f"In den Papierkorb verschieben fehlgeschlagen (Code {res}).")
+
 
 def set_process_app_id() -> None:
     """Taskleiste: Fenster gehört zur Verknüpfung „Fach“ (gleiche App-ID wie der Installer)."""

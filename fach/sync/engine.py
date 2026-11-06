@@ -22,6 +22,7 @@ from ..core.secrets import SecretStore
 from ..core.store import RunRecord, Store
 from ..core.university import University
 from ..ilias import AuthFailed, IliasBackend, IliasError
+from .progress import Estimator
 
 Notifier = Callable[[str, str], None]
 
@@ -38,7 +39,12 @@ class SyncProgress:
     course_total: int = 0
     course_id: str = ""
     current: str = ""
-    found: int = 0
+    found: int = 0              # neue Dateien in diesem Lauf (ohne ersten Abgleich)
+    fraction: float = 0.0       # 0..1, wächst nie rückwärts
+    eta: Optional[float] = None  # Restzeit in Sekunden, None = wird noch geschätzt
+    bytes: int = 0              # in diesem Lauf geladen
+    downloads: int = 0          # Dateien in diesem Lauf geladen (inkl. erstem Abgleich)
+    course_downloads: int = 0   # davon im aktuellen Kurs
 
 
 class SyncEngine:
@@ -56,6 +62,8 @@ class SyncEngine:
         self._lock = ProcessLock(paths.sync_lock)
         self._task: Optional[asyncio.Task] = None
         self._last_emit = 0.0
+        self._estimator: Optional[Estimator] = None
+        self._ticker: Optional[asyncio.Task] = None
 
     # --- Zustand ------------------------------------------------------------
 
@@ -73,6 +81,7 @@ class SyncEngine:
         now = time.monotonic()
         if force or now - self._last_emit > 0.12:  # höchstens ~8 Updates pro Sekunde an die Oberfläche
             self._last_emit = now
+            self._update_estimate()
             self.bus.emit("sync", progress=asdict(self.progress))
 
     # --- Steuerung ---------------------------------------------------------
@@ -128,21 +137,35 @@ class SyncEngine:
             self.progress.course_total = len(courses)
             target = cfg.target_path
             target.mkdir(parents=True, exist_ok=True)
+            stats = self.store.course_durations()
+            self._estimator = Estimator.for_run([
+                ((stats.get(c.id, {}).get("regular_s") if c.synced_once else stats.get(c.id, {}).get("initial_s")),
+                 not c.synced_once) for c in courses])
+            self._ticker = asyncio.get_running_loop().create_task(self._tick())
+            self.backend.set_byte_hook(self._on_bytes)
             failed = offline = 0
             for i, course in enumerate(courses, 1):
                 self.progress.phase = "course"
                 self.progress.course_index = i
                 self.progress.course_id = course.id
                 self.progress.current = ""
+                self.progress.course_downloads = 0
+                self._estimator.start(i - 1)
                 self._emit(force=True)
                 self._log(log_fh, f"--- {course.title} ({course.id}) → {course.folder}")
 
                 def on_progress(kind: str, path: str) -> None:
                     self.progress.current = path
+                    if kind == "download":
+                        self.progress.downloads += 1
+                        self.progress.course_downloads += 1
                     self._emit()
 
                 result = await self.backend.sync_course(cfg.username, password, course, target,
                                                         cfg.options.videos, on_progress)
+                took = self._estimator.finish(i - 1)
+                if not result.errors:
+                    self.store.record_duration(course.id, took, result.initial)
                 self.store.add_files(run_id, course.id, "added", result.added, result.initial)
                 self.store.add_files(run_id, course.id, "changed", result.changed, result.initial)
                 if result.initial:
@@ -192,6 +215,11 @@ class SyncEngine:
             return self._finish(run_id, "error", added_total, changed_total, "Unerwarteter Fehler beim Abgleich",
                                 details, new_by_course, trigger)
         finally:
+            if self._ticker is not None:
+                self._ticker.cancel()
+                self._ticker = None
+            self.backend.set_byte_hook(None)
+            self._estimator = None
             self.progress = SyncProgress()
             self._emit(force=True)
             if log_fh:
@@ -200,6 +228,21 @@ class SyncEngine:
             self._lock.release()
 
     # --- Hilfen ---------------------------------------------------------------
+
+    def _on_bytes(self, n: int) -> None:
+        self.progress.bytes += n
+        self._emit()
+
+    def _update_estimate(self) -> None:
+        if self._estimator is not None:
+            self.progress.fraction, self.progress.eta = self._estimator.snapshot()
+
+    async def _tick(self) -> None:
+        """Einmal pro Sekunde Restzeit neu rechnen – auch wenn PFERD gerade lange an einer Seite hängt."""
+        while True:
+            self._update_estimate()
+            self._emit(force=True)
+            await asyncio.sleep(1.0)
 
     async def _wait_for_network(self, timeout_s: int) -> bool:
         deadline = time.monotonic() + timeout_s
