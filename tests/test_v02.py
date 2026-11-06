@@ -71,9 +71,9 @@ def test_rules_transform_quotes_and_order():
 
     rules = [{"src": 'Vorlesung/06 "Arch".pdf', "dst": "Vorlesung/06.pdf"}, {"src": "Blatt 1.pdf", "dst": None}]
     t = Transformer(rules_transform(rules) + "\n" + DEFAULT_TRANSFORM)
-    assert str(t.transform(PurePath('Vorlesung/06 "Arch".pdf'))) == "Vorlesung/06.pdf"
+    assert t.transform(PurePath('Vorlesung/06 "Arch".pdf')).as_posix() == "Vorlesung/06.pdf"
     assert t.transform(PurePath("Blatt 1.pdf")) is None
-    assert str(t.transform(PurePath("Blatt 2.pdf"))) == "Blatt 2.pdf"
+    assert t.transform(PurePath("Blatt 2.pdf")).as_posix() == "Blatt 2.pdf"
 
 
 # --- Klausuren --------------------------------------------------------------------------
