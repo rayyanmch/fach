@@ -1,0 +1,92 @@
+name: Testen & bauen
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      macos:
+        description: "Auch macOS bauen (experimentell, kostet mehr Actions-Minuten)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # für Releases bei Tags
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Abhängigkeiten
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[window,dev]" "pyinstaller>=6.10"
+      - name: Tests (Windows)
+        run: pytest -q
+      - name: Selbsttest der gebauten Konfiguration
+        run: python -m fach --version
+      - name: App bauen (PyInstaller)
+        run: pyinstaller --noconfirm packaging/fach.spec
+      - name: Gebaute App startet (--version)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\Fach\Fach.exe -ArgumentList "--version" -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "Fach.exe --version endete mit $($p.ExitCode)" }
+      - name: Installer bauen (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $version = (Select-String -Path fach/__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging\windows\fach.iss
+          Compress-Archive -Path dist\Fach -DestinationPath "dist\Fach-$version-portable.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fach-Windows
+          path: |
+            dist/Fach-Setup-*.exe
+            dist/Fach-*-portable.zip
+          retention-days: 30
+      - name: Release (nur bei Tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          files: |
+            dist/Fach-Setup-*.exe
+            dist/Fach-*-portable.zip
+
+  macos:
+    needs: test
+    if: github.event_name == 'workflow_dispatch' && inputs.macos
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[window]" "pyinstaller>=6.10"
+      - run: pyinstaller --noconfirm packaging/fach.spec
+      - run: cd dist && ditto -c -k --keepParent Fach.app Fach-macOS-unsigniert.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fach-macOS
+          path: dist/Fach-macOS-unsigniert.zip
+          retention-days: 14

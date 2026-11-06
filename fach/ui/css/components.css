@@ -1,0 +1,177 @@
+/* ---------- Knöpfe ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 36px; padding: 0 16px; border-radius: var(--r);
+  border: 1px solid var(--line-strong); background: var(--panel); color: var(--text);
+  font-weight: 500; white-space: nowrap; user-select: none;
+  transition: background-color var(--fast) var(--ease), border-color var(--fast) var(--ease),
+              color var(--fast) var(--ease), transform var(--fast) var(--ease), opacity var(--fast) var(--ease);
+}
+.btn:hover { background: var(--raised); }
+.btn:active { transform: scale(0.98); }
+.btn[disabled] { opacity: 0.45; pointer-events: none; }
+.btn .icon { color: var(--text-2); }
+.btn-primary { background: var(--primary-bg); border-color: transparent; color: var(--primary-text); }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-primary .icon { color: currentColor; }
+.btn-lg { height: 44px; padding: 0 20px; font-size: 15px; border-radius: 10px; }
+.btn-sm { height: 28px; padding: 0 10px; font-size: 13px; border-radius: var(--r-sm); gap: 6px; }
+.btn-quiet { border-color: transparent; background: transparent; color: var(--text-2); }
+.btn-quiet:hover { background: var(--raised); color: var(--text); }
+.btn-danger { color: var(--negative); }
+.btn-danger:hover { background: var(--negative-soft); }
+.btn-block { width: 100%; }
+
+.icon-btn {
+  display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r-sm);
+  border: 0; background: transparent; color: var(--muted);
+  transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+.icon-btn:hover { background: var(--raised); color: var(--text); }
+
+.link-btn { border: 0; background: none; padding: 0; color: var(--ink-text); font-weight: 500; }
+.link-btn:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- Eingaben ---------- */
+.field { display: grid; gap: 6px; }
+.field > span { font-size: 13px; color: var(--text-2); font-weight: 500; }
+.field .help { font-size: 12px; line-height: 16px; color: var(--muted); }
+.input {
+  height: 40px; padding: 0 12px; border-radius: var(--r);
+  border: 1px solid var(--line-strong); background: var(--panel); color: var(--text); width: 100%;
+  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+.input::placeholder { color: var(--muted); opacity: 0.8; }
+.input:hover { border-color: color-mix(in srgb, var(--text) 24%, transparent); }
+.input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px var(--ink-soft); }
+.input.sm { height: 32px; padding: 0 10px; font-size: 13px; border-radius: var(--r-sm); }
+.input.mono { font-family: var(--mono); font-size: 13px; }
+.input[aria-invalid="true"] { border-color: var(--negative); }
+.form-error { color: var(--negative); font-size: 13px; line-height: 18px; display: flex; gap: 8px; align-items: flex-start; }
+.form-error .icon { margin-top: 1px; }
+
+/* Schalter */
+.switch { position: relative; display: inline-flex; flex: none; width: 34px; height: 20px; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch span {
+  width: 100%; height: 100%; border-radius: 10px; background: var(--line-strong);
+  transition: background-color var(--fast) var(--ease); pointer-events: none;
+}
+.switch span::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 8px;
+  background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); transition: transform var(--med) var(--ease);
+}
+.switch input:checked + span { background: var(--ink); }
+.switch input:checked + span::after { transform: translateX(14px); }
+.switch input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* Häkchen */
+.check {
+  appearance: none; flex: none; width: 18px; height: 18px; margin: 0; border-radius: 5px;
+  border: 1.5px solid var(--line-strong); background: var(--panel); display: grid; place-items: center;
+  transition: background-color var(--fast) var(--ease), border-color var(--fast) var(--ease);
+}
+.check::after {
+  content: ""; width: 10px; height: 6px; border: 2px solid var(--on-ink); border-top: 0; border-right: 0;
+  transform: rotate(-45deg) translate(1px, -1px) scale(0.6); opacity: 0;
+  transition: transform var(--fast) var(--ease), opacity var(--fast) var(--ease);
+}
+.check:checked { background: var(--ink); border-color: var(--ink); }
+.check:checked::after { opacity: 1; transform: rotate(-45deg) translate(1px, -1px) scale(1); }
+
+/* Wochentage */
+.days { display: inline-flex; gap: 4px; }
+.day {
+  width: 36px; height: 32px; border-radius: var(--r-sm); border: 1px solid var(--line-strong);
+  background: var(--panel); color: var(--text-2); font-size: 13px; font-weight: 500;
+  transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease), border-color var(--fast) var(--ease);
+}
+.day:hover { background: var(--raised); }
+.day[aria-pressed="true"] { background: var(--ink-soft); border-color: var(--ink-line); color: var(--ink-text); }
+
+.time-input { width: 96px; text-align: center; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* ---------- Signatur & kleine Teile ---------- */
+
+/* Kürzel wie ein Etikett am Postfach */
+.plate {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  min-width: 44px; height: 22px; padding: 0 6px; border-radius: 4px;
+  border: 1px solid var(--line-strong); background: var(--sunken);
+  font: 500 11px/1 var(--mono); letter-spacing: 0.02em; color: var(--text-2);
+}
+
+/* Textmarker hinter neuen, ungeöffneten Dateien */
+.marked {
+  background: linear-gradient(transparent 0 32%, var(--marker) 32% 90%, transparent 90%);
+  box-decoration-break: clone; -webkit-box-decoration-break: clone;
+  border-radius: 2px; padding: 0 2px; margin: 0 -2px;
+}
+
+.kbd {
+  display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px;
+  border-radius: 4px; border: 1px solid var(--line-strong); border-bottom-width: 2px;
+  font: 500 11px/1 var(--mono); color: var(--muted); background: var(--panel);
+}
+
+.dot { width: 8px; height: 8px; border-radius: 4px; flex: none; background: var(--muted); }
+.dot.ok { background: var(--positive); }
+.dot.bad { background: var(--negative); }
+.dot.warn { background: var(--warn); }
+.dot.busy { background: var(--ink); }
+
+.tag { font-size: 12px; color: var(--muted); }
+
+/* ---------- Flächen ---------- */
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow-sm); }
+
+.banner {
+  display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: var(--r-card);
+  border: 1px solid var(--line); background: var(--panel);
+}
+.banner .icon { color: var(--muted); }
+.banner.bad { background: var(--negative-soft); border-color: color-mix(in srgb, var(--negative) 22%, transparent); }
+.banner.bad .icon { color: var(--negative); }
+.banner.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 22%, transparent); }
+.banner.warn .icon { color: var(--warn); }
+.banner .text { flex: 1; min-width: 0; }
+.banner .text b { font-weight: 500; }
+.banner .text p { color: var(--text-2); font-size: 13px; }
+
+.progress { height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.progress > i { display: block; height: 100%; background: var(--ink); border-radius: 2px; transform-origin: left;
+  transition: transform var(--slow) var(--ease); }
+.progress.indeterminate > i { width: 30%; animation: slide 1.2s var(--ease) infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+
+/* Toast */
+.toasts { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: grid; gap: 8px; z-index: 50; pointer-events: none; }
+.toast {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 10px;
+  background: var(--text); color: var(--bg); font-size: 13px; box-shadow: var(--shadow-float);
+  animation: rise var(--med) var(--ease); pointer-events: auto;
+}
+.toast .icon { color: currentColor; opacity: 0.8; }
+.toast.out { opacity: 0; transform: translateY(6px); transition: opacity var(--med) var(--ease), transform var(--med) var(--ease); }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* Menü */
+.menu {
+  position: fixed; z-index: 40; min-width: 180px; padding: 4px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--shadow-float);
+  animation: pop var(--med) var(--ease);
+}
+.menu button {
+  display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 10px; border: 0;
+  border-radius: var(--r-sm); background: transparent; text-align: left; font-size: 13px; color: var(--text);
+}
+.menu button:hover { background: var(--raised); }
+.menu button .icon { color: var(--muted); }
+.menu button.danger { color: var(--negative); }
+.menu button.danger .icon { color: var(--negative); }
+@keyframes pop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+.skeleton { background: var(--raised); border-radius: var(--r-sm); animation: none; }

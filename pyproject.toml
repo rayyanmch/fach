@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fach"
+version = "0.1.0"
+description = "Holt die Unterlagen deiner ILIAS-Kurse (Uni Köln) automatisch auf deinen Rechner."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "PFERD==3.10.1",          # gepinnt: fach/ilias/pferd_runtime.py kennt Interna dieser Version
+    "platformdirs>=4.2",
+]
+
+[project.optional-dependencies]
+window = ["pywebview>=5.3"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+fach = "fach.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["fach*"]
+
+[tool.setuptools.package-data]
+fach = ["ui/*.html", "ui/css/*.css", "ui/js/*.js", "ui/js/views/*.js", "ui/fonts/*", "ui/img/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
