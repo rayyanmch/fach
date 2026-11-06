@@ -105,7 +105,8 @@ Abhängigkeitsrichtung: ui → server → (sync, core, platform) → ilias → P
   **In 0.2 neu und nur auf Windows prüfbar:** rahmenloses Fenster (Ziehen, Kanten, Doppelklick, Maximieren),
   natives Datei-Ziehen nach außen, Kopieren als Datei (CF_HDROP), „Öffnen mit“, Papierkorb, stilles Update mit Neustart.
   Fehler davon landen in `%LOCALAPPDATA%\Fach\logs\app.log`. → Checkliste in README.
-- **Auto-Update** funktioniert erst, wenn die Releases öffentlich abrufbar sind (Repo privat → 404).
+- **Auto-Update:** Repo ist seit 07.11.2026 öffentlich; `latest.json` und Installer sind anonym abrufbar, der Updater
+  wurde gegen v0.2.0 geprüft (Check + Download + SHA-256). Der Neustart nach stillem Update ist nur auf Windows prüfbar.
 - macOS-Build und launchd mit gebauter App ungetestet (nicht Ziel dieser Runde).
 
 ## Entwicklung
@@ -121,5 +122,5 @@ der Server-Start einen echten Zeitplan (launchd/Aufgabenplanung), sobald `onboar
 ## Offene Fragen an Rayyan
 
 - Name „Fach“ ist ein Arbeitstitel (Doppelsinn: Studienfach / Postfach). Passt er?
-- Repo öffentlich machen? Nötig für Auto-Updates (oder ein separates öffentliches Release-Repo).
+- Commits tragen die Uni-Mail (zeigt die Kennung). Für künftige Commits die GitHub-noreply-Adresse nehmen?
 - Soll Fach deine bestehende Ordnerstruktur (eigene PFERD-Regeln) übernehmen können? → Idee 8 in docs/IDEEN.md.
