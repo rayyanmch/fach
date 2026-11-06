@@ -77,8 +77,10 @@ Abhängigkeitsrichtung: ui → server → (sync, core, platform) → ilias → P
 - **Kurssuche gegen echtes ILIAS Köln** – am 06.11.2026 abends war ILIAS nicht erreichbar (Timeout, auch
   außerhalb der Sandbox). Parser ist gegen synthetisches HTML getestet. **Erster echter Lauf: prüfen, ob
   „Meine Kurse“ alle Kurse liefert.** Fallback in der UI: Kurs per Link hinzufügen.
-- **Windows-Teile laufen nur in CI-Tests**, nicht interaktiv: Aufgabenplanung ohne Admin, Toasts mit App-ID,
-  Keyring im gebauten Paket, WebView2-Rückfall. → Checkliste in README „Auf Windows testen“.
+- **Windows:** In CI (windows-latest) laufen alle Tests, und `Fach.exe --selftest` bestätigt im fertigen Paket:
+  PFERD + Fix, `WinVaultKeyring`, pywebview 6, Oberfläche, Schriften (Lauf vom 06.11.2026). **Nicht** interaktiv
+  geprüft: Aufgabenplanung ohne Admin, Toasts mit App-ID, Ordnerdialog, WebView2-Rückfall.
+  → Checkliste in README „Auf Windows testen“.
 - macOS-Build und launchd mit gebauter App ungetestet (nicht Ziel dieser Runde).
 
 ## Entwicklung
